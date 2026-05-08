@@ -7,7 +7,6 @@ from lvnotes.media.probe import _ensure_output_file, _run_command, probe_media
 
 
 def extract_wav(input_path: Path, output_path: Path, sample_rate: int, channels: int) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{output_path.stem}.", suffix=output_path.suffix, dir=output_path.parent)
     os.close(fd)
     tmp_path = Path(tmp_name)

@@ -504,53 +504,20 @@ Import 规则:
 - `typer` 或 `click`
 - `rich`,可选,如需进度条
 
-具体依赖清单以后续 `pyproject.toml` 为准。
+具体依赖清单以 `pyproject.toml` 为准。
 
 ---
 
-## 12. Implementation Order
+## 12. CLI Validation
 
-### 第一阶段:基础骨架
+CLI 验收覆盖：
 
-1. 创建 `lvnotes/cli/app.py`
-2. 注册 `lvnotes run`、`inspect`、各 stage 命令占位
-3. 接入配置加载、日志初始化、异常处理
-4. 创建 `PipelineContext` 的最小路径
-5. 确保 `python -m lvnotes` 和 `lvnotes` 入口一致
-
-### 第二阶段:音频管线命令
-
-1. `extract`
-2. `transcribe`
-3. `segment`
-4. `refine`
-5. `refine --debug`
-6. `run` 的纯音频路径
-
-### 第三阶段:合并阶段命令
-
-1. `unify`
-2. `outline`
-3. `section`
-4. `assemble`
-5. `assemble --no-cache`
-
-### 第四阶段:多模管线命令
-
-1. `sample --mm`
-2. `cluster --mm`
-3. `judge --mm`
-4. `select --mm`
-5. `describe --mm`
-6. `run <input-file> --mm`
-
-### 第五阶段:inspect 完整化
-
-1. audio inspect
-2. visual inspect
-3. merge inspect
-4. `--json`
-5. `--paths`
+- `python -m lvnotes --help` 与 `lvnotes --help` 入口一致。
+- `lvnotes run <input-file>` 走纯音频路径。
+- `lvnotes run <video> --mm` 走多模路径。
+- 每个 stage 命令调用同名 stage 的 `run(ctx)`。
+- `inspect` 只读取产物，不触发计算。
+- `--no-cache`、`--debug`、`--mm` 的语义符合本文规则。
 
 ---
 

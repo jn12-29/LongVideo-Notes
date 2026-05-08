@@ -1,6 +1,6 @@
 # Visual Pipeline
 
-多模管线详细设计文档。本管线把视频画面转成可与音频语义段对齐的视觉描述，对外通过 `VisualArtifacts` 暴露产物。第一版实现可先保留目录、配置项和接口骨架，不要求完成完整视觉处理。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`、`docs/audio-pipeline.md`。
+多模管线详细设计文档。本管线把视频画面转成可与音频语义段对齐的视觉描述，对外通过 `VisualArtifacts` 暴露产物。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`、`docs/audio-pipeline.md`。
 
 文档结构：Overview、Design Considerations、Stages、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。
 
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-多模管线由 5 个 stage 顺序执行，仅在多模模式下启用。第一版可以先创建目录和占位接口，不要求实现完整视觉处理。
+多模管线由 5 个 stage 顺序执行，仅在多模模式下启用。
 
 | Stage | 名称 | 主要工具 | 主要产物 |
 |---|---|---|---|
@@ -26,23 +26,19 @@
 
 ## 2. Design Considerations
 
-### 2.1 第一版可暂不实现
-
-多模能力不是音频端到端闭环的前置条件。第一阶段可以只实现音频管线和合并阶段，保留 `visual_pipeline/` 目录、配置项、`VisualArtifacts` 接口占位即可。
-
-### 2.2 视觉段以画面稳定区间为单位
+### 2.1 视觉段以画面稳定区间为单位
 
 采样帧不直接进入 VLM。先用 pHash + 直方图把连续相似或渐变帧合并成视觉段，减少 VLM 调用次数，也避免对每秒画面重复描述。
 
-### 2.3 judge 与 describe 分层
+### 2.2 judge 与 describe 分层
 
 stage 3 使用弱 VLM 判断画面是否有意义、介质类型和最有信息量的帧；stage 5 使用强 VLM 生成详细描述。这样把便宜的过滤判断和贵的详细理解分开。
 
-### 2.4 describe 依赖音频 refine 产物
+### 2.3 describe 依赖音频 refine 产物
 
 画面理解需要结合该时间段讲师讲解内容。stage 5 启动前必须满足 `AudioArtifacts.is_complete() == True`，等待逻辑由 CLI 调度层处理，本管线只消费已经完成的 `AudioArtifacts`。
 
-### 2.5 VLM 输入不包含内部 marker
+### 2.4 VLM 输入不包含内部 marker
 
 `AudioArtifacts.get_text_at()` 默认 `strip_refs=True`，会剥离 `[[REF:N]]`。VLM 不理解项目内部 marker，describe 阶段应使用默认值，除非有明确调试需求。
 
@@ -311,27 +307,17 @@ lvnotes/visual_pipeline/
 - `media/`：sample 用
 - `llm/`：judge、describe 用
 
-### 预计涉及的外部库
+### 外部库
 
-- `imagehash`：pHash 计算
-- `opencv-python`：直方图、清晰度评分
 - `Pillow`：图像处理
 - `jinja2`：渲染 prompt 模板
 
-具体依赖清单与版本以后续 `pyproject.toml` 为准。
+具体依赖清单与版本以 `pyproject.toml` 为准。
 
 ---
 
-## 8. Implementation Order
+## 8. Stage Validation
 
-按 `docs/overview.md` §7 的实现优先级，多模管线在音频端到端闭环完成后再实现。
+多模管线的每个 stage 独立验收：真实视频输入跑通、缓存命中、错误路径覆盖、类型检查通过、独立 CLI 调用可用。
 
-1. 创建 `visual_pipeline/` 目录、prompt 占位、`VisualArtifacts` 接口骨架
-2. 实现 sample
-3. 实现 cluster
-4. 实现 judge
-5. 实现 select
-6. 实现 describe
-7. 升级 merge/unify 与 merge/section 支持视觉信息
-
-每个 stage 独立验收：真实视频输入跑通、缓存命中、错误路径覆盖、类型检查通过、独立 CLI 调用可用。
+端到端验收使用 `lvnotes run <video> --mm`，并检查视觉描述、图片路径、时间戳和最终 Markdown 结构。

@@ -1,4 +1,6 @@
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 import logging
 from pathlib import Path
@@ -10,9 +12,9 @@ from lvnotes.core.artifacts import AudioArtifacts, VisualArtifacts
 from lvnotes.core.cache import hash_file
 from lvnotes.core.config import load_config
 from lvnotes.core.context import ArtifactBundle, PipelineContext
-from lvnotes.core.exceptions import LVNotesError
+from lvnotes.core.exceptions import CacheError, LVNotesError
 from lvnotes.core.logging import configure_logging
-from lvnotes.core.paths import build_paths, ensure_runtime_dirs
+from lvnotes.core.paths import PipelinePaths, build_paths
 from lvnotes.media.probe import probe_media
 from lvnotes.merge import assemble, outline, section, unify
 from lvnotes.visual_pipeline import cluster, describe, judge, sample, select
@@ -53,13 +55,14 @@ def main() -> None:
 @click.option("--no-cache", is_flag=True)
 @click.option("--debug", is_flag=True)
 def run_command(input_file: Path, config_path: Path | None, mm: bool, no_cache: bool, debug: bool) -> None:
-    ctx = _make_context(input_file, config_path, mm, no_cache, debug, require_mm=False)
-    _run_stage_sequence(ctx, [extract.run, transcribe.run, segment.run, refine.run])
+    ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False)
     if ctx.mode == "multimodal":
-        _run_stage_sequence(ctx, [sample.run, cluster.run, judge.run, select.run])
+        _run_multimodal_upstream(ctx, debug)
         if not ctx.artifacts.audio.is_complete():
             raise click.ClickException("visual describe requires completed audio refine stage")
         _run_stage(ctx, describe.run)
+    else:
+        _run_audio_upstream(ctx, debug)
     _run_stage_sequence(ctx, [unify.run, outline.run, section.run, assemble.run])
     click.echo(f"Output: {ctx.paths.output_note_md}")
 
@@ -107,6 +110,8 @@ def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> cl
     @click.option("--debug", is_flag=True)
     def command(input_file: Path, config_path: Path | None, mm: bool, no_cache: bool, debug: bool) -> None:
         ctx = _make_context(input_file, config_path, mm, no_cache, debug and stage_name == "refine", require_mm=require_mm)
+        if stage_name == "describe" and not ctx.artifacts.audio.is_complete():
+            raise click.ClickException(str(CacheError("visual describe requires completed audio refine stage; run refine first")))
         output = _run_stage(ctx, stage_run)
         cache_hit = getattr(output, "cache_hit", False)
         paths = getattr(output, "output_paths", [])
@@ -134,17 +139,50 @@ def _make_context(input_file: Path, config_path: Path | None, mm: bool, no_cache
         mode = "multimodal" if mm and probe.video is not None else "audio_only"
         input_hash = hash_file(source_path)
         paths = build_paths(source_path, config.project.cache_dir, config.project.output_dir, input_hash)
-        ensure_runtime_dirs(paths)
+        _ensure_runtime_dirs(paths)
         artifacts = ArtifactBundle(audio=AudioArtifacts(input_hash, paths), visual=VisualArtifacts(input_hash, paths) if mode == "multimodal" else None)
         return PipelineContext(source_path, input_hash, mode, config, paths, artifacts, debug, no_cache)
     except LVNotesError as exc:
         log.error("command failed: %s", exc)
         raise click.ClickException(str(exc)) from exc
+    except Exception:
+        log.exception("unexpected command failure")
+        raise
+
+
+def _ensure_runtime_dirs(paths: PipelinePaths) -> None:
+    for directory in (
+        paths.run_dir,
+        paths.audio_dir,
+        paths.visual_dir,
+        paths.visual_frames_dir,
+        paths.refined_dir,
+        paths.sections_dir,
+        paths.output_dir,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
 
 
 def _run_stage_sequence(ctx: PipelineContext, stages: list[StageRun]) -> None:
     for stage_run in stages:
         _run_stage(ctx, stage_run)
+
+
+def _run_audio_upstream(ctx: PipelineContext, debug: bool) -> None:
+    _run_stage_sequence(ctx, [extract.run, transcribe.run, segment.run])
+    _run_stage(replace(ctx, debug=debug), refine.run)
+
+
+def _run_visual_upstream(ctx: PipelineContext) -> None:
+    _run_stage_sequence(ctx, [sample.run, cluster.run, judge.run, select.run])
+
+
+def _run_multimodal_upstream(ctx: PipelineContext, debug: bool) -> None:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        audio_future = executor.submit(_run_audio_upstream, ctx, debug)
+        visual_future = executor.submit(_run_visual_upstream, ctx)
+        audio_future.result()
+        visual_future.result()
 
 
 def _run_stage(ctx: PipelineContext, stage_run: StageRun) -> object:
@@ -153,6 +191,9 @@ def _run_stage(ctx: PipelineContext, stage_run: StageRun) -> object:
     except LVNotesError as exc:
         log.error("stage failed: %s", exc)
         raise click.ClickException(str(exc)) from exc
+    except Exception:
+        log.exception("unexpected stage failure")
+        raise
     stage_name = getattr(output, "stage_name", stage_run.__module__)
     cache_hit = getattr(output, "cache_hit", False)
     click.echo(f"{stage_name}: {'cache hit' if cache_hit else 'done'}")

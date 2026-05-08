@@ -12,7 +12,7 @@ class SampledFrame:
 @dataclass(frozen=True)
 class VisualSampleIndex:
     frames: list[SampledFrame]
-    fps: float
+    duration: float
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class VisualJudgement:
     medium: str
     is_meaningful: bool
     evolution: str
-    richest_frame_id: int
+    richest_frame_id: int | None
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class VisualJudgementList:
 @dataclass(frozen=True)
 class VisualSelection:
     segment_id: int
+    frame_id: int
     start: float
     end: float
     image_source_path: Path
@@ -54,12 +55,12 @@ class VisualSelection:
 @dataclass(frozen=True)
 class VisualDescription:
     segment_id: int
+    frame_id: int
     start: float
     end: float
     image_source_path: Path
     medium: str
     description: str
-    audio_text: str
 
 
 @dataclass(frozen=True)

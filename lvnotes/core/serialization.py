@@ -22,7 +22,9 @@ def to_jsonable(value: object) -> JsonValue:
         return {field.name: to_jsonable(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {str(key): to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, list | tuple | frozenset | set):
+    if isinstance(value, frozenset | set):
+        return [to_jsonable(item) for item in sorted(value, key=lambda item: (type(item).__name__, repr(item)))]
+    if isinstance(value, list | tuple):
         return [to_jsonable(item) for item in value]
     raise TypeError(f"cannot serialize {type(value).__name__}")
 

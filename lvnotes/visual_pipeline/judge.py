@@ -28,19 +28,27 @@ def run(ctx: PipelineContext) -> StageOutput:
         if cached is not None:
             return cached
     prompt = Template(template.read_text(encoding="utf-8")).render(segments=segments.segments)
-    parts = [TextPart(text=prompt)]
+    candidates = {segment.id: _candidate_frame_ids(segment.frame_ids) for segment in segments.segments}
+    parts = [TextPart(text=f"{prompt}\nCandidate frame ids by segment: {candidates}")]
     for segment in segments.segments:
-        frame_id = segment.frame_ids[len(segment.frame_ids) // 2]
-        parts.append(ImagePart(path=ctx.paths.visual_frames_dir / frames[frame_id].image_source_path, mime_type="image/png"))
+        for frame_id in _candidate_frame_ids(segment.frame_ids):
+            parts.append(ImagePart(path=ctx.paths.visual_frames_dir / frames[frame_id].image_source_path, mime_type="image/png"))
     judgements = complete_json(for_task(ctx.config, "slide_judge"), [LLMMessage(role="user", content=parts)], VisualJudgementList, LLMRequestOptions(temperature=0.1), 1)
-    _validate_judgements(judgements, segments)
+    _validate_judgements(judgements, candidates)
     atomic_write_json(ctx.paths.visual_judgements_json, judgements)
     return cache_output("visual_judge", [ctx.paths.visual_judgements_json], cache_key, {"segments": segments_hash}, "", prompt_hash, {"item_count": len(judgements.judgements)})
 
 
-def _validate_judgements(judgements: VisualJudgementList, segments) -> None:
-    by_id = {segment.id: segment for segment in segments.segments}
+def _validate_judgements(judgements: VisualJudgementList, candidates: dict[int, list[int]]) -> None:
     for judgement in judgements.judgements:
-        segment = by_id.get(judgement.segment_id)
-        if segment is None or judgement.richest_frame_id not in segment.frame_ids:
+        candidate_ids = candidates.get(judgement.segment_id)
+        if candidate_ids is None:
             raise LLMError("visual judge invariant failed")
+        if judgement.richest_frame_id is not None and judgement.richest_frame_id not in candidate_ids:
+            raise LLMError("visual judge invariant failed")
+
+
+def _candidate_frame_ids(frame_ids: list[int]) -> list[int]:
+    if len(frame_ids) <= 3:
+        return frame_ids
+    return [frame_ids[0], frame_ids[len(frame_ids) // 2], frame_ids[-1]]

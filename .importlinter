@@ -37,3 +37,53 @@ source_modules = lvnotes.merge
 forbidden_modules =
     lvnotes.audio_pipeline
     lvnotes.visual_pipeline
+
+[importlinter:contract:media-no-pipelines]
+name = Media does not import pipeline modules
+type = forbidden
+source_modules = lvnotes.media
+forbidden_modules =
+    lvnotes.audio_pipeline
+    lvnotes.visual_pipeline
+    lvnotes.merge
+    lvnotes.asr
+    lvnotes.llm
+
+[importlinter:contract:llm-no-pipelines]
+name = LLM does not import pipeline modules
+type = forbidden
+source_modules = lvnotes.llm
+forbidden_modules =
+    lvnotes.audio_pipeline
+    lvnotes.visual_pipeline
+    lvnotes.merge
+    lvnotes.asr
+    lvnotes.media
+
+[importlinter:contract:asr-no-pipelines]
+name = ASR does not import pipeline modules
+type = forbidden
+source_modules = lvnotes.asr
+forbidden_modules =
+    lvnotes.audio_pipeline
+    lvnotes.visual_pipeline
+    lvnotes.merge
+    lvnotes.llm
+    lvnotes.media
+
+[importlinter:contract:external-unique-entry]
+name = External SDKs stay behind unique entries
+type = forbidden
+source_modules = lvnotes
+forbidden_modules =
+    subprocess
+    openai
+    anthropic
+    faster_whisper
+ignore_imports =
+    lvnotes.media.probe -> subprocess
+    lvnotes.llm.openai_chat -> openai
+    lvnotes.llm.openai_responses -> openai
+    lvnotes.llm.openai_compatible_chat -> openai
+    lvnotes.llm.anthropic_messages -> anthropic
+    lvnotes.asr.faster_whisper_local -> faster_whisper

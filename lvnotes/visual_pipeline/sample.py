@@ -24,7 +24,8 @@ def run(ctx: PipelineContext) -> StageOutput:
             return cached
     frames = extract_frames(ctx.source_path, ctx.paths.visual_frames_dir, cfg.fps, "%06d.png")
     samples = [SampledFrame(id=index, timestamp=frame.timestamp, image_source_path=frame.path.relative_to(ctx.paths.visual_frames_dir)) for index, frame in enumerate(frames)]
-    index = VisualSampleIndex(frames=samples, fps=cfg.fps)
+    duration = frames[-1].timestamp + (1.0 / cfg.fps if cfg.fps > 0 else 0.0)
+    index = VisualSampleIndex(frames=samples, duration=duration)
     atomic_write_json(ctx.paths.visual_sample_json, index)
     outputs = [ctx.paths.visual_sample_json, *[frame.path for frame in frames]]
     return cache_output("visual_sample", outputs, cache_key, {"input": input_hash}, config_hash, None, {"item_count": len(samples)})

@@ -103,6 +103,8 @@ Loop rules:
 - Review must happen after implementation, not only before.
 - If review finds blockers, fix them and then re-review. Do not stop after the fix.
 - If a fix affects a shared contract, public behavior, or module boundary, re-run independent read-only review after the fix.
+- When documentation and implementation conflict, treat the documentation as the source of truth by default. Fix the implementation to satisfy the documented contract, even if that requires additional implementation work.
+- Only change documentation instead of implementation when the documentation is internally contradictory, impossible to implement, explicitly superseded by the user, or clearly stale status text rather than a current contract. In that case, record the final contract in documentation before or together with the implementation fix.
 - Tests, compile checks, CLI smoke tests, type checks, import checks, and targeted searches are verification. They do not replace review.
 - A subagent implementation report is not proof of correctness. The main agent must verify or request read-only review of the changed surface.
 - Do not summarize work as complete until the latest review after the latest fix reports no confirmed blockers and relevant verification passes.
@@ -132,7 +134,7 @@ Before starting multi-agent coding, treat documentation as an executable contrac
 3. Fork multiple independent read-only review agents from different module perspectives. For substantial cross-module changes, use at least two reviewers with different ownership perspectives.
 4. Treat each review as useful but potentially incomplete.
 5. Merge confirmed findings into a ranked blocker list.
-6. Fix blockers surgically in the source-of-truth docs or implementation files.
+6. Fix blockers surgically in implementation files to satisfy the source-of-truth docs, unless the documentation exception below applies.
 7. Search for obsolete terms, old field names, stale examples, and conflicting API signatures.
 8. Repeat review after each substantial contract change.
 9. For code changes, run targeted tests, type checks, import checks, or smoke tests that match the changed surface.
@@ -149,7 +151,7 @@ Useful review perspectives:
 
 During this process:
 
-- Prefer fixing the source-of-truth document over adding migration notes.
+- Prefer fixing implementation to match the source-of-truth document. Fix the document only when the contract itself is wrong, contradictory, impossible, stale status text, or explicitly superseded by the user.
 - Do not preserve old names unless explicitly needed.
 - Do not start implementation while unresolved blockers remain.
 - Distinguish blocking interface ambiguity from non-blocking wording polish.

@@ -1,5 +1,6 @@
 Return JSON matching {"judgements":[{"segment_id":0,"medium":"ppt","is_meaningful":true,"evolution":"...","richest_frame_id":0}]}.
 Classify each visual segment. medium must be one of ppt, blackboard, code, demo, other.
+Use only the candidate global SampledFrame ids listed after this prompt for richest_frame_id. If the segment is not meaningful or no candidate frame is clearly richest, return null for richest_frame_id.
 
 Segments:
 {{ segments }}

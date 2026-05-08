@@ -442,37 +442,20 @@ lvnotes/merge/
 - `core/`：`schemas`、`artifacts`、`paths`、`timestamps`、`pipeline`、`cache`、`config`、`context`、`logging`、`exceptions`
 - `llm/`：outline、section 用
 
-### 预计涉及的外部库
+### 外部库
 - `jinja2`：渲染 prompt 模板
 - `pydantic`：配置加载（间接，经 `core/config.py`）
 - `tenacity`：API 重试
 
-具体依赖清单与版本以后续 `pyproject.toml` 为准。
+具体依赖清单与版本以 `pyproject.toml` 为准。
 
-不依赖 `media/` `asr/` 及其预计涉及的外部库。
+不依赖 `media/`、`asr/` 及其外部库。
 
 ---
 
-## 8. Implementation Order
+## 8. Stage Validation
 
-按 `docs/overview.md` §7 的实现优先级，合并阶段先做**简化版**打通端到端，再升级：
-
-### 第一阶段：纯音频模式简化版（`docs/overview.md` §7 第 5 步）
-
-1. `unify`（仅纯音频路径，跳过 visual 处理）
-2. `outline`
-3. `section`（暂不实现 visual 渲染分支）
-4. `assemble`
-
-每个 stage 独立验收：真实音频输入跑通端到端、缓存命中、错误路径覆盖。
-
-### 第二阶段：升级双管线（`docs/overview.md` §7 第 8 步）
-
-多模管线全部 stage 完成后：
-
-1. `unify` 升级支持 VisualSlot 挂入
-2. `section` 增加图片渲染
-3. 端到端用真实视频（含 PPT 切换）跑通，验证 cross_refs 链接、时间戳跳转、目录、frontmatter
+合并阶段支持纯音频与多模输入。`unify` 负责把可选视觉信息挂入 `ContentBlock.visuals`，`section` 根据 `VisualSlot` 渲染图片引用，`assemble` 生成最终 Markdown。
 
 ### 单 stage 验收标准
 

@@ -1,5 +1,5 @@
-Return JSON for one VisualDescription with fields segment_id, start, end, image_source_path, medium, description, audio_text.
-Describe the image using the audio context. Copy segment_id, start, end, image_source_path, medium, and audio_text exactly.
+Return JSON with only one field: description.
+Describe the image using the audio context. Do not copy metadata fields into the JSON.
 
 Selection: {{ selection }}
 Audio context: {{ audio_text }}

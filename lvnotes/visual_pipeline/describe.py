@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import logging
 
 from jinja2 import Template
@@ -34,10 +35,25 @@ def run(ctx: PipelineContext) -> StageOutput:
     for selection, audio_text in zip(selections, audio_texts):
         image_path = resolve_visual_image_path(ctx.paths, selection.image_source_path)
         prompt = Template(template.read_text(encoding="utf-8")).render(selection=selection, audio_text=audio_text)
-        result = complete_json(for_task(ctx.config, "slide_describe"), [LLMMessage(role="user", content=[TextPart(text=prompt), ImagePart(path=image_path, mime_type="image/png")])], VisualDescription, LLMRequestOptions(temperature=0.2), 1)
-        if result.segment_id != selection.segment_id or result.image_source_path != selection.image_source_path:
-            raise LLMError("visual describe invariant failed")
-        descriptions.append(result)
+        result = complete_json(for_task(ctx.config, "slide_describe"), [LLMMessage(role="user", content=[TextPart(text=prompt), ImagePart(path=image_path, mime_type="image/png")])], _DescriptionOnly, LLMRequestOptions(temperature=0.2), 1)
+        if not result.description.strip():
+            raise LLMError("visual describe invariant failed: empty description")
+        descriptions.append(
+            VisualDescription(
+                segment_id=selection.segment_id,
+                frame_id=selection.frame_id,
+                start=selection.start,
+                end=selection.end,
+                image_source_path=selection.image_source_path,
+                medium=selection.medium,
+                description=result.description,
+            )
+        )
     result_list = VisualDescriptionList(descriptions=descriptions)
     atomic_write_json(ctx.paths.visual_descriptions_json, result_list)
     return cache_output("visual_describe", [ctx.paths.visual_descriptions_json], cache_key, {"selections": selections_hash, "audio_text": audio_hash}, "", prompt_hash, {"item_count": len(descriptions)})
+
+
+@dataclass(frozen=True)
+class _DescriptionOnly:
+    description: str

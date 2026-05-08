@@ -32,6 +32,6 @@ def run(ctx: PipelineContext) -> StageOutput:
         frame = frames[frame_id]
         if not resolve_visual_image_path(ctx.paths, frame.image_source_path).exists():
             raise CacheError(f"selected frame not found: {frame.image_source_path}")
-        selections.append(VisualSelection(segment_id=segment.id, start=segment.start, end=segment.end, image_source_path=frame.image_source_path, medium=judgement.medium))
+        selections.append(VisualSelection(segment_id=segment.id, frame_id=frame_id, start=segment.start, end=segment.end, image_source_path=frame.image_source_path, medium=judgement.medium))
     atomic_write_json(ctx.paths.visual_selections_json, selections)
     return cache_output("visual_select", [ctx.paths.visual_selections_json], cache_key, {"segments": hash_json(segments), "judgements": hash_json(judgements), "samples": hash_json(samples)}, hash_json({}), None, {"item_count": len(selections)})

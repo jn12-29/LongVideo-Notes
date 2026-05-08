@@ -870,6 +870,7 @@ lvnotes/core/
 
 - Python 标准库
 - `pydantic` / `pydantic-settings`
+- `PyYAML`
 - `core.*` 子模块
 
 `core/` 禁止依赖:

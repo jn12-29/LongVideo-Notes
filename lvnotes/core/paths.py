@@ -60,19 +60,6 @@ def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash
     )
 
 
-def ensure_runtime_dirs(paths: PipelinePaths) -> None:
-    for directory in (
-        paths.run_dir,
-        paths.audio_dir,
-        paths.visual_dir,
-        paths.visual_frames_dir,
-        paths.refined_dir,
-        paths.sections_dir,
-        paths.output_dir,
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
-
-
 def resolve_visual_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
     if image_source_path.is_absolute():
         raise ValueError("image_source_path must be relative to visual_frames_dir")

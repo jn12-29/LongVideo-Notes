@@ -3,7 +3,7 @@ import re
 
 from jinja2 import Template
 
-from lvnotes.core.cache import atomic_write_json, build_cache_key, cache_manifest_path, hash_json, hash_prompt_template, read_cache_manifest, read_json_file
+from lvnotes.core.cache import atomic_write_json, atomic_write_text, build_cache_key, cache_manifest_path, hash_json, hash_prompt_template, read_cache_manifest, read_json_file
 from lvnotes.core.context import PipelineContext
 from lvnotes.core.exceptions import LLMError
 from lvnotes.core.pipeline import StageOutput
@@ -33,12 +33,15 @@ def run(ctx: PipelineContext) -> StageOutput:
         if cached is not None:
             log.info("audio.refine cache hit input_hash=%s", ctx.input_hash)
             return cached
-    if ctx.no_cache or _manifest_cache_key_changed(ctx, cache_key):
+    if ctx.no_cache or _partial_cache_key_changed(ctx, cache_key):
         _clear_refined_dir(ctx)
+    _write_partial_cache_key(ctx, cache_key)
 
     completed = _load_completed(ctx, len(segments.markers))
+    sliding_started_at = _initial_sliding_started_at(ctx, completed)
     for marker in segments.markers[len(completed) :]:
-        refined = _refine_one(ctx, transcript, segments.markers, completed, marker)
+        prompt_completed, sliding_started_at = _prompt_completed_segments(ctx, completed, marker.id, sliding_started_at)
+        refined = _refine_one(ctx, transcript, segments.markers, prompt_completed, marker)
         _validate_refined(refined, marker)
         atomic_write_json(ctx.paths.refined_dir / f"{refined.id:04d}.json", refined)
         completed.append(refined)
@@ -48,7 +51,7 @@ def run(ctx: PipelineContext) -> StageOutput:
 
     result = RefinedTranscript(segments=completed, language=transcript.language, duration=transcript.duration)
     atomic_write_json(ctx.paths.refined_transcript_json, result)
-    return cache_output("refine", output_paths, cache_key, {"transcript": transcript_hash, "segments": segments_hash}, config_hash, prompt_hash, {"item_count": len(completed)})
+    return cache_output("refine", output_paths, cache_key, {"transcript": transcript_hash, "segments": segments_hash}, config_hash, prompt_hash, {"item_count": len(completed), "sliding_started_at": sliding_started_at})
 
 
 def _clear_refined_dir(ctx: PipelineContext) -> None:
@@ -57,11 +60,44 @@ def _clear_refined_dir(ctx: PipelineContext) -> None:
         path.unlink()
 
 
-def _manifest_cache_key_changed(ctx: PipelineContext, cache_key: str) -> bool:
+def _partial_cache_key_changed(ctx: PipelineContext, cache_key: str) -> bool:
+    key_path = ctx.paths.refined_dir / ".cache_key"
+    if key_path.exists():
+        return key_path.read_text(encoding="utf-8").strip() != cache_key
     manifest_path = cache_manifest_path(ctx.paths.refined_transcript_json)
     if not manifest_path.exists():
-        return False
+        return any(ctx.paths.refined_dir.glob("*.json"))
     return read_cache_manifest(manifest_path).cache_key != cache_key
+
+
+def _write_partial_cache_key(ctx: PipelineContext, cache_key: str) -> None:
+    atomic_write_text(ctx.paths.refined_dir / ".cache_key", cache_key + "\n")
+
+
+def _prompt_completed_segments(
+    ctx: PipelineContext,
+    completed: list[RefinedSegment],
+    current_id: int,
+    sliding_started_at: int | None,
+) -> tuple[list[RefinedSegment], int | None]:
+    threshold = ctx.config.audio_pipeline.refine.sliding_window_token_threshold
+    estimated_tokens = sum(len(segment.cleaned_text) for segment in completed)
+    if sliding_started_at is None and estimated_tokens > threshold:
+        sliding_started_at = current_id
+    if sliding_started_at is None:
+        return completed, None
+    recent = ctx.config.audio_pipeline.refine.sliding_window_recent_segments
+    return completed[-recent:], sliding_started_at
+
+
+def _initial_sliding_started_at(ctx: PipelineContext, completed: list[RefinedSegment]) -> int | None:
+    threshold = ctx.config.audio_pipeline.refine.sliding_window_token_threshold
+    total = 0
+    for segment in completed:
+        total += len(segment.cleaned_text)
+        if total > threshold:
+            return segment.id + 1
+    return None
 
 
 def _load_completed(ctx: PipelineContext, expected_count: int) -> list[RefinedSegment]:

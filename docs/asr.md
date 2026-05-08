@@ -364,7 +364,7 @@ Import 规则:
 - CUDA 可选
 - `use_batched` 只有 GPU 下才考虑启用
 
-具体依赖版本以后续 `pyproject.toml` 为准。
+具体依赖版本以 `pyproject.toml` 为准。
 
 ---
 

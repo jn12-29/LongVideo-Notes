@@ -34,6 +34,14 @@ def test_hash_json_is_stable_for_key_order() -> None:
     assert build_cache_key("stage", {"input": "abc"}) == build_cache_key("stage", {"input": "abc"})
 
 
+def test_set_serialization_is_sorted_for_stable_profile_hash() -> None:
+    assert to_jsonable(frozenset({"vision", "json_mode", "reasoning"})) == [
+        "json_mode",
+        "reasoning",
+        "vision",
+    ]
+
+
 def test_timestamp_formatting_and_marker_parsing() -> None:
     assert format_hms(3723.9) == "01:02:03"
     assert format_mmss(83.2) == "01:23"

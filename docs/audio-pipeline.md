@@ -464,7 +464,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 | `faster_whisper` 直接 import | ❌(必须经 `asr/`) |
 | `subprocess` 调 ffmpeg | ❌(必须经 `media/`) |
 
-进入实现阶段后,以上规则由 `.importlinter` 契约文件强制,CI 检查。
+以上规则由 `.importlinter` 契约文件强制,CI 检查。
 
 ---
 
@@ -476,18 +476,18 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - `asr/`:stage 2 用
 - `media/`:stage 1 用
 
-### 预计涉及的外部库
-本管线预计**直接**使用:
+### 外部库
+本管线**直接**使用:
 - `jinja2`:渲染 prompt 模板
 - `pydantic`:配置加载(间接,经 `core/config.py`)
 - `tenacity`:API 重试(间接,经 `llm/`)
 
-本管线预计**不直接**使用:
+本管线**不直接**使用:
 - `faster-whisper`:仅经 `asr/faster_whisper_local.py` 使用
 - `openai` / `anthropic`:仅经 `llm/` 使用
 - `ffmpeg-python` / `subprocess`:仅经 `media/` 使用
 
-具体依赖清单与版本以后续 `pyproject.toml` 为准。
+具体依赖清单与版本以 `pyproject.toml` 为准。
 
 ---
 

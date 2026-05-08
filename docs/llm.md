@@ -569,7 +569,7 @@ Import 规则：
 - `tenacity`
 - `pydantic`，如果最终用 pydantic model 做 LLM JSON schema 校验
 
-具体依赖版本以后续 `pyproject.toml` 为准。
+具体依赖版本以 `pyproject.toml` 为准。
 
 ---
 

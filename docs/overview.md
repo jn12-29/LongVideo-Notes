@@ -119,9 +119,9 @@ Stage 2 用滑动窗口聚类(双阈值 + 跟段首累积比对),把相邻渐变
 
 ```
 longvideo-notes/
-├── pyproject.toml              (计划创建)
-├── .importlinter                (计划创建;依赖契约,CI 强制)
-├── config.example.yaml           (计划创建的完整配置示例)
+├── pyproject.toml              (项目依赖与命令入口)
+├── .importlinter                (依赖契约,CI 强制)
+├── config.example.yaml           (完整配置示例)
 ├── README.md                    (项目入口与文档索引)
 
 │
@@ -132,7 +132,7 @@ longvideo-notes/
 │   ├── asr.md                   (ASR 抽象详细设计)
 │   ├── cli.md                   (CLI 命令与调度详细设计)
 │   ├── audio-pipeline.md        (音频管线详细设计)
-│   ├── visual-pipeline.md       (多模管线详细设计,第一版实现可占位)
+│   ├── visual-pipeline.md       (多模管线详细设计)
 │   ├── merge.md                 (合并阶段详细设计)
 │   ├── coding-standards.md      (开发规范,所有模块必读)
 │   ├── overview.md              (本文档)
@@ -191,7 +191,7 @@ longvideo-notes/
 │   │       ├── segment.jinja
 │   │       └── refine.jinja
 │   │
-│   ├── visual_pipeline/         (多模管线,第一版可仅保留目录、prompt 占位和接口骨架)
+│   ├── visual_pipeline/         (多模管线)
 │   │   ├── sample.py
 │   │   ├── cluster.py
 │   │   ├── judge.py
@@ -344,7 +344,7 @@ segments = complete_json(client, messages, SegmentList, options)
 - 同 `audio_pipeline/` 的原则。
 - 通过 `AudioArtifacts` 接口读音频管线的产物(仅 stage 5 describe 需要)。
 - **不引用 `audio_pipeline/` 内部模块**,只用 `AudioArtifacts`。
-- 第一版可以只保留目录、prompt 占位和 `VisualArtifacts` 接口骨架,完整视觉 stage 后续实现。
+- 5 个 stage 均通过统一 `run(ctx) -> StageOutput` 接口执行。
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
 
@@ -392,19 +392,17 @@ segments = complete_json(client, messages, SegmentList, options)
 
 ---
 
-## 7. 实现优先级
+## 7. 实现与验收
 
-按这个顺序写,每一步都端到端可跑。
+当前实现按以下模块边界组织,每个 stage 应保持可单独执行和可独立验收。
 
-1. **基础设施**:`core/`(schemas、paths、timestamps、slugs、pipeline、cache、config、logging、context)+ `media/probe.py` + `media/audio.py` + `cli/app.py` 骨架 + `.importlinter` 契约。
-2. **LLM 抽象**:`llm/`(base、types、openai_chat、openai_responses、anthropic_messages、openai_compatible_chat、json_helper、factory)。第一版实现 `openai_chat`、`openai_responses`、`anthropic_messages`、`openai_compatible_chat`。
+1. **基础设施**:`core/`(schemas、paths、timestamps、slugs、pipeline、cache、config、logging、context)+ `media/probe.py` + `media/audio.py` + `cli/app.py` + `.importlinter` 契约。
+2. **LLM 抽象**:`llm/`(base、types、openai_chat、openai_responses、anthropic_messages、openai_compatible_chat、json_helper、factory)。
 3. **ASR 抽象**:`asr/`(base、faster_whisper_local、factory)。
-4. **音频管线**:按 stage 顺序 extract → transcribe → segment → refine,每个 stage 独立提交独立 review。
-5. **合并阶段(简化版)**:`merge/unify.py`(纯音频模式直接转换)+ `outline` + `section` + `assemble`。打通"音频文件 → Markdown 笔记"端到端。
-6. **测试与打磨**:用真实音频跑全流程,调 prompt、调阈值、修 bug。
-7. **多模管线**:5 个 stage 顺序实现。
-8. **合并阶段升级**:`merge/unify.py` 支持双管线合并。
-9. **LLM 抽象打磨**:完善各协议的错误归一化、能力检查与真实 endpoint 兼容性。
+4. **音频管线**:按 stage 顺序 extract → transcribe → segment → refine。
+5. **合并阶段**:`merge/unify.py` + `outline` + `section` + `assemble`,支持纯音频和多模输入。
+6. **多模管线**:sample → cluster → judge → select → describe。
+7. **测试与打磨**:用真实音频/视频跑全流程,调 prompt、调阈值、修 bug。
 
 每一步完成的"验收标准"是:
 
@@ -417,7 +415,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 ## 8. 配置文件示例
 
-完整配置示例计划放在 `config.example.yaml`,当前这里只给框架。
+完整配置示例见 `config.example.yaml`,当前这里只给框架。
 
 `tasks.*` 是封闭任务名映射。第一版任务名为 `segment` / `refine` / `outline` / `section` / `slide_judge` / `slide_describe`。新增任务名必须先更新配置 schema,运行时配置含未知任务名直接 `ConfigError` 退出。
 
@@ -499,9 +497,9 @@ merge:
 
 ## 9. 依赖
 
-项目尚未进入代码实现与环境配置阶段,依赖清单暂不固定。后续创建 `pyproject.toml` 时再以实际实现为准补齐运行时依赖与 dev 依赖。
+运行时依赖与 dev 依赖以 `pyproject.toml` 为准。
 
-系统层面预计需要 `ffmpeg`,但安装与版本要求等实现阶段再确认。
+系统层面需要 `ffmpeg` / `ffprobe`。
 
 ---
 
