@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
@@ -9,23 +9,23 @@ description = "Local CLI for turning long video or audio into structured Markdow
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "anthropic>=0.40",
-  "click>=8.1",
-  "jinja2>=3.1",
-  "openai>=1.50",
-  "pillow>=10.0",
-  "pydantic>=2.8",
-  "pydantic-settings>=2.4",
-  "pyyaml>=6.0",
-  "tenacity>=8.3",
+  "anthropic",
+  "click",
+  "jinja2",
+  "openai",
+  "pillow",
+  "pydantic",
+  "pydantic-settings",
+  "pyyaml",
+  "tenacity",
 ]
 
 [project.optional-dependencies]
-asr = ["faster-whisper>=1.0"]
+asr = ["faster-whisper"]
 dev = [
-  "import-linter>=2.0",
-  "pytest>=8.3",
-  "ruff>=0.6",
+  "import-linter",
+  "pytest",
+  "ruff",
 ]
 
 [project.scripts]
