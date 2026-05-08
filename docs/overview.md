@@ -121,15 +121,15 @@ Stage 2 用滑动窗口聚类(双阈值 + 跟段首累积比对),把相邻渐变
 longvideo-notes/
 ├── pyproject.toml
 ├── .importlinter                (依赖契约,CI 强制)
-├── config.example.yaml
-├── README.md                    (完成开发后再写)
+├── config.example.yaml           (计划创建的完整配置示例)
+├── README.md                    (项目入口与文档索引)
 
 │
 ├── docs/
-│   ├── audio_pipeline.md        (音频管线详细设计)
-│   ├── visual_pipeline.md       (多模管线详细设计,第一版可占位)
+│   ├── audio-pipeline.md        (音频管线详细设计)
+│   ├── visual-pipeline.md       (多模管线详细设计,第一版可占位)
 │   ├── merge.md                 (合并阶段详细设计)
-│   ├── coding_standards.md      (开发规范,所有模块必读)
+│   ├── coding-standards.md      (开发规范,所有模块必读)
 │   ├── overview.md              (本文档)
 │   └── assets/
 │       └── longvideo_notes_pipeline.svg  (流程图)
@@ -310,7 +310,7 @@ longvideo-notes/
 - 同 `audio_pipeline/` 的原则。
 - 通过 `AudioArtifacts` 接口读音频管线的产物(仅 stage 5 describe 需要)。
 - **不引用 `audio_pipeline/` 内部模块**,只用 `AudioArtifacts`。
-- 第一版可以只创建目录和占位文件,仅在 `visual_pipeline/overview.md` 中声明"未实现"。
+- 第一版可以只创建目录和占位文件,并在 `docs/visual-pipeline.md` 中声明"未实现"。
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
 
@@ -339,7 +339,7 @@ longvideo-notes/
 
 ## 6. 关键架构约定
 
-这几条是项目的"宪法",所有模块必须遵守。`coding_standards.md` 会把它们落到具体的 do/don't。
+这几条是项目的"宪法",所有模块必须遵守。`coding-standards.md` 会把它们落到具体的 do/don't。
 
 1. **单向数据流**。下游模块不回头读上游的"上一阶段"产物。比如 `merge/` 只读 `AudioArtifacts.get_refined()`,不读 `transcript_raw.json`。
 2. **所有阶段产物落 JSON / 文本文件,不用 pickle**。手工可读、可改、可单独重跑。所有跨模块产物文件的写入必须经 `core/cache.py` 的 `atomic_write_*` 唯一入口,避免进程中断留下半文件。
@@ -378,7 +378,7 @@ longvideo-notes/
 
 ## 8. 配置文件示例
 
-完整 schema 见 `config.example.yaml`,这里只给框架。
+完整配置示例计划放在 `config.example.yaml`,当前这里只给框架。
 
 `tasks.*` 是封闭枚举,可用任务名集中在 `core/config.py` 的 `TaskName` 字面量类型中(`segment` / `refine` / `outline` / `section` / `slide_judge` / `slide_describe`)。新增任务时**先**改 `TaskName` 再用,运行时配置含未知任务名直接 `ConfigError` 退出。
 
@@ -450,8 +450,7 @@ merge:
     target_chapter_count_hint: "5-12"
   section:
     concurrent_calls: 5
-    timestamp_format:
-      "[{hms}]" # 渲染形态;支持 {hms} {mmss} {seconds} {seconds_int}
+    timestamp_format: "[{hms}]" # 渲染形态;支持 {hms} {mmss} {seconds} {seconds_int}
       # LLM 输出走内部 marker [[TS:seconds]],由 assemble 替换
     include_visuals: true # 多模模式下章节内嵌入视觉描述与图片
   assemble:
@@ -490,9 +489,9 @@ merge:
 
 ## 10. 文档索引
 
-- `coding_standards.md` —— 开发规范、工程原则、针对 coding agent 的注意事项。**所有写代码前必读**。
-- `docs/audio_pipeline.md` —— 音频管线 4 个 stage 的详细设计与接口契约。
-- `docs/visual_pipeline.md` —— 多模管线 5 个 stage 的详细设计(第一版可仅占位)。
+- `docs/coding-standards.md` —— 开发规范、工程原则、针对 coding agent 的注意事项。**所有写代码前必读**。
+- `docs/audio-pipeline.md` —— 音频管线 4 个 stage 的详细设计与接口契约。
+- `docs/visual-pipeline.md` —— 多模管线 5 个 stage 的详细设计(第一版可仅占位)。
 - `docs/merge.md` —— 合并阶段的详细设计。
 
 每份管线文档都按以下结构组织:Overview、Design Considerations(设计要点)、Stages(含每个 stage 的 input/output schema、实现要点、配置项、缓存规则、错误处理)、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。

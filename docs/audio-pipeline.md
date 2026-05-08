@@ -1,6 +1,6 @@
 # Audio Pipeline
 
-音频管线设计文档。本管线把输入文件转成结构化的 `RefinedTranscript`,对外通过 `AudioArtifacts` 暴露产物。**写代码前必读**本文档以及 `coding_standards.md` 与 `README.md`。
+音频管线设计文档。本管线把输入文件转成结构化的 `RefinedTranscript`,对外通过 `AudioArtifacts` 暴露产物。**写代码前必读**本文档以及 `coding-standards.md` 与 `README.md`。
 
 文档结构:Overview、Design Considerations、Stages、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。
 
@@ -19,7 +19,7 @@
 
 **对外产物**集中在 `AudioArtifacts`(`core/artifacts.py`)。下游模块(多模管线、合并阶段)只通过这个接口读取,不直接 import `audio_pipeline/` 内部,也不直接读缓存文件。详见 §5。
 
-**本管线不知道下游存在**——既不知道有多模管线,也不知道有合并阶段。这是 README §6 关键架构约定第 5、6 条以及 `coding_standards.md` §6.2(单向依赖)的强制结论。这条约束直接决定了产物面向"通用下游"而非具体下游:见 §2 第 3 条。
+**本管线不知道下游存在**——既不知道有多模管线,也不知道有合并阶段。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2(单向依赖)的强制结论。这条约束直接决定了产物面向"通用下游"而非具体下游:见 §2 第 3 条。
 
 纯音频模式与多模模式下,本管线行为完全相同。区别仅在于多模模式下 `RefinedTranscript` 还会被多模管线 stage 5 (describe) 消费一次。
 
@@ -59,7 +59,7 @@ refine 阶段在整理第 K 段时,识别当前段引用的前文概念(前 K-1 
 
 ### 2.5 时间戳精度
 
-全管线时间戳一律 `float` 秒数、精度毫秒(3 位小数)。跨 stage、跨管线传递时不允许精度损失。所有格式化经 `core/timestamps.py`,本文不重复 README §5.1 的硬约定。
+全管线时间戳一律 `float` 秒数、精度毫秒(3 位小数)。跨 stage、跨管线传递时不允许精度损失。所有格式化经 `core/timestamps.py`,本文不重复 `docs/overview.md` §5.1 的硬约定。
 
 ### 2.6 缓存键
 
@@ -85,7 +85,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`AudioArtifacts` 实例)访问,与外部消费者走同一接口。
 
-所有跨段累积型产物的写入(`refined/{seg_id:04d}.json` 等)必须经 `core/cache.py` 的 `atomic_write_json` 入口,见 `coding_standards.md` §6.1。
+所有跨段累积型产物的写入(`refined/{seg_id:04d}.json` 等)必须经 `core/cache.py` 的 `atomic_write_json` 入口,见 `coding-standards.md` §6.1。
 
 ### 3.1 Stage 1: extract
 
@@ -108,7 +108,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 **缓存键**:`hash(input_file_bytes) + hash(extract 配置) + "extract"`。
 
 **错误处理**:
-- 输入文件不存在:自然抛 `FileNotFoundError`,不要"以防万一"加 `path.exists()` 预检(参考 `coding_standards.md` §12.2)
+- 输入文件不存在:自然抛 `FileNotFoundError`,不要"以防万一"加 `path.exists()` 预检(参考 `coding-standards.md` §12.2)
 - ffmpeg 调用失败:`media/` 内部包装为 `MediaError` 上抛
 - 输出 wav 校验:抽完后断言文件存在 + 时长与 probe 结果在 ±100ms 内一致;断言失败抛 `MediaError`
 
@@ -129,7 +129,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 - `initial_prompt` 引导加标点。中文转录普遍缺标点,给一段示例文本(带正确标点)作为 initial_prompt 显著改善
 - 输出归一化为 `Transcript` dataclass。`asr/` 不暴露 faster-whisper 原生类型给上层
 
-**配置项**(来自 `asr.*`,见 README §8):
+**配置项**(来自 `asr.*`,见 `docs/overview.md` §8):
 - `asr.backend`: `faster_whisper_local`(第一版唯一)
 - `asr.model`: `large-v3` 等
 - `asr.device`: `auto` / `cuda` / `cpu`
@@ -238,11 +238,11 @@ LLM 输出的 `cross_refs` 必须满足:
 
 ## 4. Schema
 
-本管线相关的所有 dataclass 集中定义在 `core/schemas/audio.py`,通过 `core/schemas/__init__.py` re-export。任何模块**只能从 `core.schemas` 引用、不能在自己模块内重新定义副本**(`coding_standards.md` §2.2)。
+本管线相关的所有 dataclass 集中定义在 `core/schemas/audio.py`,通过 `core/schemas/__init__.py` re-export。任何模块**只能从 `core.schemas` 引用、不能在自己模块内重新定义副本**(`coding-standards.md` §2.2)。
 
-所有 dataclass `frozen=True`,**例外**:`RefinedTranscript` 在 stage 4 累积构建期间是可变的,构建完成后视为不可变。这一例外按 `coding_standards.md` §2.3 在 dataclass 的 docstring 中显式标注。
+所有 dataclass `frozen=True`,**例外**:`RefinedTranscript` 在 stage 4 累积构建期间是可变的,构建完成后视为不可变。这一例外按 `coding-standards.md` §2.3 在 dataclass 的 docstring 中显式标注。
 
-Schema 字段不携带配置元信息(见 `coding_standards.md` §2.4)。生成时的配置(target_count_hint、模板 hash 等)由 `StageOutput.metadata` 携带。
+Schema 字段不携带配置元信息(见 `coding-standards.md` §2.4)。生成时的配置(target_count_hint、模板 hash 等)由 `StageOutput.metadata` 携带。
 
 ```python
 from dataclasses import dataclass
@@ -323,7 +323,7 @@ class RefinedTranscript:
 5. `RefinedSegment.cross_refs` 中每个值都 `< self.id` 且对应到存在的 `RefinedSegment.id`;`cleaned_text` 内出现的所有 `[[REF:N]]` 标记 N 必须出现在 `cross_refs` 中(双向一致)
 6. `Transcript.duration == AudioExtractResult.duration == RefinedTranscript.duration`(容差 ±100ms)
 
-不变量违反 → `AssertionError` 直接抛(属于 `coding_standards.md` §3.1 表中的"不可预期的内部错误"),不要 catch、不要"自动修复"。
+不变量违反 → `AssertionError` 直接抛(属于 `coding-standards.md` §3.1 表中的"不可预期的内部错误"),不要 catch、不要"自动修复"。
 
 ---
 
@@ -491,11 +491,11 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 ## 8. Implementation Order
 
-按 README §7 的顺序实现:**extract → transcribe → segment → refine**。每个 stage 独立提交独立 review。
+按 `docs/overview.md` §7 的顺序实现:**extract → transcribe → segment → refine**。每个 stage 独立提交独立 review。
 
 ### 每个 stage 的"完成"验收标准
 
-按 `coding_standards.md` §19.2 的硬性清单:
+按 `coding-standards.md` §19.2 的硬性清单:
 
 1. 主路径用真实输入跑通端到端(`tests/fixtures/` 下的 30 秒音频片段,由 `prepare.py` 生成)
 2. 缓存机制工作(再跑一次能命中缓存,跳过该 stage 的实际计算)

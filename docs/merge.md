@@ -1,6 +1,6 @@
 # Merge Stage
 
-合并阶段设计文档。本阶段消费两条管线的产物（`AudioArtifacts` + 可选的 `VisualArtifacts`），合成最终 Markdown 笔记。**写代码前必读**本文档以及 `coding_standards.md`、`README.md`、`docs/audio_pipeline.md`。
+合并阶段设计文档。本阶段消费两条管线的产物（`AudioArtifacts` + 可选的 `VisualArtifacts`），合成最终 Markdown 笔记。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/audio-pipeline.md`。
 
 文档结构：Overview、Design Considerations、Stages、Schema、对外契约（产物形态）、Module Layout、Dependencies、Implementation Order。
 
@@ -19,7 +19,7 @@
 
 **对外产物**：`note.md`（用户最终读的笔记）以及调试用的中间产物（`outline.json` / `sections/*.md` / `content_blocks.json`）。合并阶段是管线终点，没有 downstream 模块，但产物形态构成**用户接口契约**，详见 §5。
 
-**本阶段不知道两条管线的内部实现**——只通过 `core/artifacts.py` 的 `AudioArtifacts` / `VisualArtifacts` 接口读取产物，禁止 `from audio_pipeline import ...` 或 `from visual_pipeline import ...`。这是 README §6 关键架构约定第 5、6 条以及 `coding_standards.md` §6.2 的强制结论。
+**本阶段不知道两条管线的内部实现**——只通过 `core/artifacts.py` 的 `AudioArtifacts` / `VisualArtifacts` 接口读取产物，禁止 `from audio_pipeline import ...` 或 `from visual_pipeline import ...`。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2 的强制结论。
 
 纯音频模式下 `VisualArtifacts is None`，唯一感知模式差异的是 `unify`，其余 stage 对模式无感。
 
@@ -41,15 +41,22 @@
 
 `unify` 是唯一感知"纯音频 / 多模"的 stage。下游 outline / section / assemble 输入都是统一的 `ContentBlock` 序列，对模式无感。
 
-### 2.4 cross_refs 渲染分两步
+### 2.4 cross_refs 与时间戳渲染都用内部 marker + 纯逻辑替换
 
-section LLM **不**处理跨段引用链接，只把 refine 阶段产出的 `[§N]` 标记**原样保留**在输出 markdown 中。`assemble` 阶段做纯逻辑替换：扫描全文 `[§N]` → 查 `block_id → chapter` 映射 → 替换为 `[§N](#chapter-anchor)`。理由：LLM 不擅长生成精确锚点，纯逻辑替换更鲁棒、可单测、出错可定位。
+refine 阶段把跨段引用产出为 `[[REF:N]]` marker，section LLM **不**处理引用链接，只把 marker **原样保留**在输出 markdown 中。section LLM 同样**不**输出人类可读时间戳，而是在每个 block 起点插入 `[[TS:<seconds>]]` marker（seconds 为浮点秒，3 位小数）。
+
+assemble 阶段做纯逻辑替换：
+
+- `[[REF:N]]` → `[§N](#chapter-anchor)`（查 `block_id → chapter_id → anchor`）
+- `[[TS:123.456]]` → 按 `merge.section.timestamp_format` 渲染为可读形态，再按 `merge.assemble.video_url_template` 决定是否包成跳转链接
+
+用 `[[TAG:...]]` 而非让 LLM 直接输出 `[01:23](url?t=83)` 的好处：LLM 不擅长精确生成 URL，时间戳精度可以无损穿过 LLM，assemble 纯逻辑可单测、错误可定位，且 marker 不是 LLM 会自然生成的形态。
 
 ### 2.5 section 并发 + per-chapter cache + 断点续跑
 
 每章独立 LLM 调用，并发数由 `merge.section.concurrent_calls` 控制。**缓存粒度是 per-chapter**（不是 stage 级）：改某章 prompt 或上游 ContentBlock，只该章失效。已存在 `sections/{i:03d}.md` 跳过。
 
-这与 `audio_pipeline.md` §3.4 refine 的 stage 级缓存不同：refine 段间有强依赖（前段产物作为后段 prompt 一部分），所以以 stage 为缓存单元；section 章节之间相对独立（仅共享 outline 全局摘要作为 context），适合 per-chapter 缓存。
+这与 `audio-pipeline.md` §3.4 refine 的 stage 级缓存不同：refine 段间有强依赖（前段产物作为后段 prompt 一部分），所以以 stage 为缓存单元；section 章节之间相对独立（仅共享 outline 全局摘要作为 context），适合 per-chapter 缓存。
 
 ### 2.6 assemble 是纯逻辑
 
@@ -118,6 +125,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - **单次 LLM 调用，不分块**。即使章节数 100+，summary 总量也远小于全文转录
 - **短输出原则**：LLM 输出 JSON 数组，每元素含 `id / title / summary / block_id_start / block_id_end`；不复述章节正文
 - 用 `prompts/outline.jinja` 模板渲染。模板内容：任务说明 + 目标章节数 hint + 所有 ContentBlock 的 `(id, topic, summary)` 列表（按 id 序）
+- LLM JSON 解析 + 1 次修复重试 + schema 校验走 `llm.complete_json()` helper（同 segment / refine）
 - 输出 JSON 的解析与校验：
   1. 解析失败 → 重试 1 次；仍失败抛 `LLMError`
   2. 校验范围递增不重叠：`chapters[i].block_id_end + 1 == chapters[i+1].block_id_start`
@@ -128,7 +136,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 **配置项**（`merge.outline.*`）：
 - `target_chapter_count_hint: str` —— 例如 `"5-12"`，作为 prompt 中的目标章节数提示，非硬约束
 
-**缓存键**：`hash(content_blocks.json) + hash(outline 配置) + hash(LLM profile) + hash(prompts/outline.jinja) + "outline"`。
+**缓存键**：`hash(content_blocks.json) + hash(outline 配置) + hash(LLM profile) + hash_prompt_template("prompts/outline.jinja") + "outline"`。模板 hash 经 `core/cache.py` 的 `hash_prompt_template()` 归一化后再计算，避免注释 / 缩进微调触发重跑。
 
 **错误处理**：
 - LLM JSON 解析失败：1 次重试后上抛 `LLMError`
@@ -152,11 +160,11 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 *并发*：用 `asyncio.Semaphore(concurrent_calls)` 控制并发上限。每章一个 task。
 
-*[§N] 标记保留*：refine 阶段产出的 `[§N]` 跨段引用标记**原样保留在输出 markdown 中**。prompt 中明确指示 LLM "见到形如 `[§N]` 的标记一律原样输出，不要替换、删除、改写"。链接化由 assemble 阶段做。
+*内部 marker 保留*：refine 阶段产出的 `[[REF:N]]` 跨段引用 marker **原样保留在输出 markdown 中**。prompt 中明确指示 LLM "见到形如 `[[REF:N]]` 的标记一律原样输出，不要替换、删除、改写"。链接化由 assemble 阶段做。
 
-*时间戳标注*：每个 block 起点在章节 markdown 中插入时间戳标记。具体格式由配置 `merge.section.timestamp_format` 决定，默认 `"[{hms}]"`（纯文本，不带链接），生成跳转链接由 assemble 阶段统一处理（见 §3.4）。
+*时间戳标注*：每个 block 起点在章节 markdown 中插入 `[[TS:<seconds>]]` marker，seconds 为该 block 的 `start` 字段值（浮点秒，3 位小数）。prompt 中明确指示 LLM "见到 block 起点位置时输出 `[[TS:<原样的 start 值>]]` marker，不要替换、不要包链接、不要改格式；见到形如 `[[REF:N]]` 的标记同样原样输出"。
 
-理由：section LLM 不应生成 URL（容易出错），它只负责标注 `[mm:ss]` 这种纯时间戳文本；assemble 阶段按全局规则替换为带链接的形式。
+渲染形态（可读时间戳格式 / 是否生成跳转链接 / URL template）全部由 assemble 阶段按配置决定，本 stage 不感知。
 
 *视觉内容渲染*：visuals 列表中每个 VisualSlot 在该 block 对应位置插入 markdown 图片引用：
 
@@ -164,7 +172,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 ![visual description](relative/path/to/frame.png)
 ```
 
-具体相对路径由 `core/paths.py` 提供（不在 section 阶段拼路径）。是否插入图片由 `merge.section.include_visuals` 控制（默认 true）。
+具体相对路径由 `core/paths.py` 提供（不在 section 阶段拼路径）。是否插入图片由 `merge.section.include_visuals` 控制（默认 true）。图片 markdown 中**不要**嵌入时间戳；时间戳由独立的 `[[TS:...]]` marker 表达。
 
 *per-chapter 缓存与断点续跑*：每章 LLM 调用前先查该章 cache，命中则跳过。每完成一章就落盘 `sections/{chapter_id:03d}.md`。某章失败时其他章已完成的不丢，整个 stage 重跑时跳过已存在的章。
 
@@ -173,13 +181,13 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - `timestamp_format: str` —— 默认 `"[{hms}]"`，支持的占位符：`{hms}`（hh:mm:ss）、`{mmss}`（mm:ss）、`{seconds}`（小数秒）、`{seconds_int}`（整数秒）
 - `include_visuals: bool` —— 默认 true
 
-**缓存键**（per-chapter）：单章 cache 键 = `hash(本章 ContentBlocks) + hash(Outline) + hash(section 配置) + hash(LLM profile) + hash(prompts/section.jinja) + "section_chapter_{id}"`。
+**缓存键**（per-chapter）：单章 cache 键 = `hash(本章 ContentBlocks) + hash(Outline) + hash(section 配置) + hash(LLM profile) + hash_prompt_template("prompts/section.jinja") + "section_chapter_{id}"`。模板 hash 走 `core/cache.py` 的 `hash_prompt_template()`（归一化后再 hash），避免注释 / 缩进微调触发全部章重跑。
 
 注意：因为 prompt 含全 outline 摘要，所以 outline 变了所有章 cache 都失效。这是符合期望的——章节摘要变了每章正文都需要重写以保持上下文一致。
 
 **错误处理**：
 - 单章 LLM 失败：`tenacity` 重试，耗尽抛 `LLMError`，整个 stage 中止（已完成章保留落盘，下次重跑接续）
-- LLM 输出包含编造的 `[§N]`（N 超出 ContentBlock id 范围）：不在本 stage 校验；assemble 阶段会发现并降级处理（见 §3.4）
+- LLM 输出包含编造的 `[[REF:N]]`（N 超出 ContentBlock id 范围）：不在本 stage 校验；assemble 阶段会发现并降级处理（见 §3.4）
 - LLM endpoint 5xx / 限流：`tenacity` 自动重试
 
 ### 3.4 Stage 4: assemble
@@ -192,30 +200,31 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **实现要点**：
 
-*章节锚点生成*：每章生成稳定 anchor：
+*章节锚点生成*：每章 anchor 由 `core/slugs.py` 的 `make_chapter_anchor(chapter_id, title) -> str` 生成。函数语义：
 
-```python
-def make_chapter_anchor(chapter: Chapter) -> str:
-    slug = slugify(chapter.title)        # 转小写 + 替换空白为 -
-    return f"chapter-{chapter.id}-{slug}"
-```
+- 对中文等 CJK 字符：`unicodedata.normalize("NFKC")` 后保留
+- 仅替换空白字符与 markdown 不安全字符为 `-`
+- 强制 `chapter-{id}-` 前缀，即使 title 为空或全部被替换掉也能产出唯一 anchor
+- 多个连续 `-` collapse 为一个，首尾 strip
 
-加 `chapter-{id}` 前缀避免标题重复时锚点冲突。
+Anchor 不持久化在 `Chapter` schema 内（见 §4 注），由 assemble 在内存中按需生成。
 
 *cross_refs 链接化*：
 
 1. 构建 `block_id → chapter_id` 映射：扫描所有 chapter，按 `[block_id_start, block_id_end]` 闭区间填表
-2. 构建 `chapter_id → anchor` 映射
-3. 对每个 sections markdown 内容，正则扫描 `\[§(\d+)\]`：
+2. 构建 `chapter_id → anchor` 映射（调 `make_chapter_anchor`）
+3. 对每个 sections markdown 内容，扫描所有 `[[REF:(\d+)]]` marker：
    - 解析 N（block_id）→ 查 `block_id → chapter_id` → 查 `chapter_id → anchor` → 替换为 `[§N](#anchor)`
-   - **找不到对应**（cross_refs 引用不存在的 block，理论上 refine 阶段已校验、不该发生）→ 保持 `[§N]` 原样不变 + 记 `WARNING` 日志（`assemble: cross_ref §N not resolvable, kept as plain text`），不阻塞
+   - 找不到对应（理论上 refine 阶段已校验、不该发生）→ 替换为纯文本 `§N` + 记 `WARNING` 日志（`assemble: cross_ref §N not resolvable, rendered as plain text`），不阻塞
 
 *时间戳跳转链接*：
 
-section stage 已经按 `merge.section.timestamp_format` 在每个 block 起点插入了纯文本时间戳（如 `[01:23:45]`）。assemble 阶段按 `merge.assemble.video_url_template` 决定是否将其替换为带链接的形式：
+assemble 阶段扫描所有 `[[TS:(\d+\.\d+)]]` marker，按以下两步替换：
 
-- `video_url_template` 未配置（`None`）→ 时间戳保持纯文本
-- 配置了 → 按 template 生成 URL，替换 `[hh:mm:ss]` 为 `[hh:mm:ss](URL)`
+1. **格式化为可读时间戳**：按 `merge.section.timestamp_format`（支持 `{hms}` / `{mmss}` / `{seconds}` / `{seconds_int}` 占位符）生成可读字符串，如 `[01:23:45]`。所有格式化经 `core/timestamps.py`。
+2. **包跳转链接（可选）**：按 `merge.assemble.video_url_template` 生成 URL：
+   - `video_url_template is None` → 保留可读字符串，不包链接
+   - 否则 → 替换为 markdown 链接 `[<可读字符串>](<URL>)`
 
 Template 支持的占位符：
 
@@ -276,7 +285,9 @@ YAML frontmatter 包含元信息，VSCode/Obsidian/Jekyll 等 markdown 工具通
 **缓存键**：`hash(Outline) + hash(content_blocks.json) + hash(所有 sections/*.md) + hash(assemble 配置) + "assemble"`。
 
 **错误处理**：
-- cross_refs 引用不存在 → WARNING 日志 + 保留原标记，不阻塞（见上）
+- cross_refs 引用不存在 → WARNING 日志 + 降级为纯文本 `§N`，不阻塞（见上）
+- section 输出含 `[[TS:abc]]` 等格式异常的 marker → assemble 不解析，保留原文 + WARNING 日志
+- section 输出 `[[REF:N]]` 中 N 越界 → 见 cross_refs 链接化第 3 点，降级为纯文本 `§N`
 - video_url_template 含未支持的占位符 → 启动时配置校验失败（`ConfigError`），不进入运行
 - 写入 note.md 失败（IO 错误）→ 自然抛 `OSError`
 
@@ -284,7 +295,7 @@ YAML frontmatter 包含元信息，VSCode/Obsidian/Jekyll 等 markdown 工具通
 
 ## 4. Schema
 
-合并阶段引入的 dataclass 集中定义在 `core/schemas.py`。所有 dataclass `frozen=True`。
+合并阶段引入的 dataclass 集中定义在 `core/schemas/merge.py`，通过 `core/schemas/__init__.py` re-export。所有 dataclass `frozen=True`。
 
 ```python
 from dataclasses import dataclass
@@ -305,7 +316,7 @@ class ContentBlock:
     start: float
     end: float
     topic: str
-    cleaned_text: str               # 含 [§N] 内嵌引用，由 refine 产出
+    cleaned_text: str               # 含 [[REF:N]] 内部 marker，由 refine 产出
     summary: str
     cross_refs: list[int]           # 严格 ref < self.id
     visuals: list[VisualSlot]       # 纯音频模式下空列表
@@ -330,8 +341,7 @@ class Chapter:
 @dataclass(frozen=True)
 class Outline:
     chapters: list[Chapter]
-    target_count_hint: str          # 产物绑定的 hint 配置，便于回溯
-    config_hash: str                # 产物绑定的配置 hash
+    # 注:不含 config_hash / target_count_hint;由 StageOutput sidecar metadata 携带
 ```
 
 注：`Chapter` 不含 `anchor` 字段。anchor 由 assemble 阶段从 `(id, title)` 生成（`make_chapter_anchor` 函数），不持久化在 schema 里。这样 schema 字段都是真"内容"，避免跨 stage 字段延迟填充导致的不可变性破例。
@@ -348,7 +358,7 @@ class Outline:
 6. `VisualSlot.start ≥ ContentBlock.start` 且 `VisualSlot.end ≤ ContentBlock.end`（clip 已应用）
 7. 所有 `start < end`、时间戳精度毫秒
 
-不变量违反 → `AssertionError`，属 `coding_standards.md` §3.1 表中"不可预期的内部错误"，不 catch、不"自动修复"。
+不变量违反 → `AssertionError`，属 `coding-standards.md` §3.1 表中"不可预期的内部错误"，不 catch、不"自动修复"。
 
 ---
 
@@ -400,6 +410,7 @@ lvnotes/merge/
 | 来源 | 允许？ |
 |---|---|
 | `core/`（schemas、artifacts、paths、timestamps、pipeline、cache、config、context、logging、exceptions、constants） | ✅ |
+| `core/slugs.py` | ✅（仅 assemble） |
 | `llm/` | ✅（仅 outline、section） |
 | `audio_pipeline/` 内部 | ❌（必须经 `core/artifacts.AudioArtifacts`） |
 | `visual_pipeline/` 内部 | ❌（必须经 `core/artifacts.VisualArtifacts`） |
@@ -426,9 +437,9 @@ lvnotes/merge/
 
 ## 8. Implementation Order
 
-按 README §7 的实现优先级，合并阶段先做**简化版**打通端到端，再升级：
+按 `docs/overview.md` §7 的实现优先级，合并阶段先做**简化版**打通端到端，再升级：
 
-### 第一阶段：纯音频模式简化版（README §7 第 5 步）
+### 第一阶段：纯音频模式简化版（`docs/overview.md` §7 第 5 步）
 
 1. `unify`（仅纯音频路径，跳过 visual 处理）
 2. `outline`
@@ -437,7 +448,7 @@ lvnotes/merge/
 
 每个 stage 独立验收：真实音频输入跑通端到端、缓存命中、错误路径覆盖。
 
-### 第二阶段：升级双管线（README §7 第 8 步）
+### 第二阶段：升级双管线（`docs/overview.md` §7 第 8 步）
 
 多模管线全部 stage 完成后：
 
@@ -447,7 +458,7 @@ lvnotes/merge/
 
 ### 单 stage 验收标准
 
-按 `coding_standards.md` §19.2 的硬性清单：
+按 `coding-standards.md` §19.2 的硬性清单：
 
 1. 主路径用真实输入跑通端到端
 2. 缓存机制工作（再跑一次能命中缓存）

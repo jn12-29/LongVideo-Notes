@@ -43,7 +43,7 @@ def f(x: List[int], y: Optional[str] = None) -> Dict[str, int]: ...
 
 ### 1.4 类型检查与依赖检查在 CI 中强制
 
-项目根目录配置 `pyright` 或 `mypy --strict`,以及 `import-linter`(契约见 `.importlinter`,落实 README §6 的单向依赖与唯一入口规则)。CI 阶段任一不通过则 PR 不能合并。
+项目根目录配置 `pyright` 或 `mypy --strict`,以及 `import-linter`(契约见 `.importlinter`,落实 `docs/overview.md` §6 的单向依赖与唯一入口规则)。CI 阶段任一不通过则 PR 不能合并。
 
 ## 2. 数据结构
 
@@ -550,7 +550,7 @@ def test_baz():
 **做法**:
 
 1. 写代码前先读 `core/schemas/` 看有什么类型可用
-2. 读至少一个已实现的同类模块作为风格参照(README §7 会指明参照对象)
+2. 读至少一个已实现的同类模块作为风格参照(`docs/overview.md` §7 会指明参照对象)
 3. 跨模块共享的概念用 schema 中已定义的名字,不要重新发明
 
 ### 15.2 名字一致
@@ -590,7 +590,7 @@ def test_baz():
 
 ### 16.4 第三方库的 import 规则受 import-linter 强制
 
-README §6 的"唯一入口规则"以 `.importlinter` 契约落地,CI 检查。新增模块或调整依赖时优先改契约文件,而不是绕开。
+`docs/overview.md` §6 的"唯一入口规则"以 `.importlinter` 契约落地,CI 检查。新增模块或调整依赖时优先改契约文件,而不是绕开。
 
 ## 17. 测试的诚实性
 
@@ -669,7 +669,7 @@ def transcribe(audio_path: Path) -> Transcript:
 实现某个细节时如果文档/规范里有依据,引用它:
 
 ```python
-# 按 docs/audio_pipeline.md §3.4,refine 阶段的 prompt cache 优化要求
+# 按 docs/audio-pipeline.md §3.4,refine 阶段的 prompt cache 优化要求
 # system message 内的内容必须严格按这个顺序排列
 system_parts = [
     TASK_RULES,
@@ -684,7 +684,7 @@ system_parts = [
 
 ### 19.1 一次只做一个 stage
 
-不要试图一次性把整个管线写完。按 README §7 的"实现优先级"顺序:
+不要试图一次性把整个管线写完。按 `docs/overview.md` §7 的"实现优先级"顺序:
 
 - 实现一个 stage
 - 写它的测试
@@ -700,7 +700,8 @@ system_parts = [
 2. 缓存机制工作(再跑一次能命中缓存)
 3. 错误路径有测试覆盖
 4. 类型检查通过
-5. 至少一个其他模块的范例参照(如果不是第一个 stage)
+5. 独立 CLI 调用可用
+6. 至少一个其他模块的范例参照(如果不是第一个 stage)
 
 不满足任意一条不算完成,不要进下一个 stage。
 
@@ -774,7 +775,7 @@ def test_foo(): assert True  # 占位测试
 
 1. `docs/<pipeline>.md` —— 详细设计文档
 2. `README.md` —— 项目级说明
-3. `coding_standards.md` —— 本文档
+3. `coding-standards.md` —— 本文档
 4. `core/schemas/` —— 数据类型权威
 5. 已实现的同类模块代码
 6. 第三方库的官方文档(最新稳定版)
