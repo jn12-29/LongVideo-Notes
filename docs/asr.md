@@ -204,16 +204,15 @@ segments, info = model.transcribe(
     word_timestamps=True,
     vad_filter=config.vad,
     condition_on_previous_text=False,
-    initial_prompt=_initial_prompt_for_language(config.language),
 )
 ```
 
 参数约束:
 
-- `word_timestamps=True`:下游调试和时间对齐需要 word-level 时间戳
+- `word_timestamps=True`:下游用 word-level 时间戳把一个 ASR segment 精确切入多个语义段
 - `vad_filter=config.vad`:默认 true,但可配置
 - `condition_on_previous_text=False`:必须显式关闭
-- `initial_prompt`:用于中文标点引导
+- 不传 `initial_prompt`:避免 prompt 文案被模型幻觉进转录正文
 - 不启用 speaker diarization,项目第一版明确非目标
 
 ### 4.5 batched 推理
@@ -266,27 +265,7 @@ raise ASRError("no speech detected")
 
 ---
 
-## 6. Initial Prompt
-
-中文输入普遍缺标点。`faster_whisper_local` 可按语言提供短 initial prompt。
-
-```python
-def _initial_prompt_for_language(language: str) -> str | None:
-    if language == "zh":
-        return "以下是中文课程讲解转录，请使用自然的中文标点。"
-    return None
-```
-
-要求:
-
-- prompt 内容短,避免污染转录
-- 只用于标点和风格引导
-- 第一版主要服务中文输入
-- prompt 文案如需配置化,后续再讨论
-
----
-
-## 7. Error Handling
+## 6. Error Handling
 
 所有 ASR 可预期错误统一包装为 `ASRError`。
 

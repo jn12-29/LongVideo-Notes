@@ -82,7 +82,7 @@ dataclass 默认 `frozen=True` 或使用 `pydantic.BaseModel` 的不可变模式
 
 ### 2.4 Schema 不携带配置信息
 
-dataclass 字段只放"内容",不放生成时的配置信息(如 `config_hash`、`target_count_hint` 这类)。配置元信息由 `StageOutput` 的 sidecar metadata 携带。理由:缓存机制本身就按"内容 + 配置 hash"索引,命中即等价于配置匹配,在 data schema 内重复声明是双源事实。
+dataclass 字段只放"内容",不放生成时的配置信息(如 `config_hash`、`runtime_hint` 这类)。配置元信息由 `StageOutput` 的 sidecar metadata 携带。理由:缓存机制本身就按"内容 + 配置 hash"索引,命中即等价于配置匹配,在 data schema 内重复声明是双源事实。
 
 ## 3. 错误处理
 
@@ -649,7 +649,8 @@ def transcribe(audio_path: Path) -> Transcript:
       在 GPU 上有 3-5x 加速;CPU 上无收益所以代码里有分支判断。
     - condition_on_previous_text=False,避免长音频中幻觉传播。
     - VAD 必开。faster-whisper 在静音段会大量幻觉。
-    - initial_prompt 引导加标点,否则中文转录普遍缺标点。
+    - word_timestamps=True,后续按语义段时间范围切分 ASR 文本。
+    - 不传 initial_prompt,避免 prompt 文案被幻觉进正文。
     """
 ```
 
@@ -711,7 +712,7 @@ system_parts = [
 
 - [ ] 所有公开函数有完整类型标注,没有 `Any`
 - [ ] 所有跨模块数据用 dataclass / pydantic,没有 `dict[str, Any]`
-- [ ] dataclass 不携带 config_hash / target_count_hint 这类配置元信息
+- [ ] dataclass 不携带 config_hash / runtime_hint 这类配置元信息
 - [ ] 错误处理符合三类规则,没有 `except Exception: pass`
 - [ ] 用 `logging` 不是 `print`
 - [ ] 没有魔法数字,全部从 config 读

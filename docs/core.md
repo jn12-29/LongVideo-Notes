@@ -69,6 +69,7 @@
 | 时间戳格式化 / marker 解析 | `core/timestamps.py` |
 | slug / anchor 生成 | `core/slugs.py` |
 | 跨管线产物访问 | `core/artifacts.py` |
+| 转录文本按时间切片 | `core/transcript.py` |
 | 原子文件写入 | `core/cache.py` 的 `atomic_write_*` |
 | prompt 模板 hash | `core/cache.py` 的 `hash_prompt_template` |
 | 配置加载与校验 | `core/config.py` |
@@ -95,7 +96,7 @@ path = ctx.paths.segments_json
 - `config_hash`
 - `prompt_hash`
 - `model`
-- `target_count_hint`
+- `runtime_hint`
 - `cache_key`
 
 这些信息放在 `StageOutput.metadata` 或缓存 sidecar 中。理由:缓存键已经表达配置事实,数据 schema 再存一份会制造双源事实。
@@ -502,9 +503,7 @@ class AudioExtractConfig:
 
 @dataclass(frozen=True)
 class AudioSegmentConfig:
-    target_count_hint: str = "15-40"
-    min_segment_seconds: float = 30
-    max_segment_seconds: float = 480
+    pass
 
 @dataclass(frozen=True)
 class AudioRefineConfig:

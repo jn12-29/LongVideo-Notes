@@ -89,7 +89,6 @@ def _run_transcribe(
         "word_timestamps": True,
         "vad_filter": config.vad,
         "condition_on_previous_text": False,
-        "initial_prompt": _initial_prompt_for_language(config.language),
     }
     if batch_size is not None:
         kwargs["batch_size"] = batch_size
@@ -125,11 +124,11 @@ def _normalize_words(words: object) -> list[WordTimestamp]:
     for word in words:
         start = normalize_seconds(float(getattr(word, "start")))
         end = normalize_seconds(float(getattr(word, "end")))
-        if start >= end:
-            raise AssertionError("ASR word start must be less than end")
+        if start > end:
+            raise AssertionError("ASR word start must be less than or equal to end")
         normalized.append(
             WordTimestamp(
-                word=str(getattr(word, "word", "")).strip(),
+                word=str(getattr(word, "word", "")),
                 start=start,
                 end=end,
                 probability=float(getattr(word, "probability", 0.0)),
@@ -146,9 +145,3 @@ def _language(transcript_info: object, fallback: str) -> str:
 def _duration(transcript_info: object) -> float:
     duration = getattr(transcript_info, "duration", None)
     return normalize_seconds(float(duration)) if duration is not None else 0.0
-
-
-def _initial_prompt_for_language(language: str) -> str | None:
-    if language == "zh":
-        return "以下是中文课程讲解转录，请使用自然的中文标点。"
-    return None

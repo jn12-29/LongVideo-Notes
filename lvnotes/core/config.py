@@ -87,9 +87,7 @@ class AudioExtractConfig(FrozenModel):
 
 
 class AudioSegmentConfig(FrozenModel):
-    target_count_hint: str = "15-40"
-    min_segment_seconds: float = 30
-    max_segment_seconds: float = 480
+    pass
 
 
 class AudioRefineConfig(FrozenModel):

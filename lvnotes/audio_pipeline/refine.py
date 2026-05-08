@@ -11,6 +11,7 @@ from lvnotes.core.schemas import RefinedSegment, RefinedTranscript, SegmentMarke
 from lvnotes.llm import LLMMessage, LLMRequestOptions, TextPart, complete_json, for_task
 
 from lvnotes.audio_pipeline._common import cache_output, cached_output, prompt_path
+from lvnotes.core.transcript import slice_transcript_text
 
 log = logging.getLogger(__name__)
 _REF_RE = re.compile(r"\[\[REF:(\d+)\]\]")
@@ -116,7 +117,7 @@ def _refine_one(ctx: PipelineContext, transcript: Transcript, markers: list[Segm
         segments=markers,
         completed=completed,
         current=marker,
-        current_text=" ".join(item.text for item in transcript.segments if item.start < marker.end and item.end > marker.start),
+        current_text=slice_transcript_text(transcript, marker.start, marker.end),
     )
     return complete_json(
         for_task(ctx.config, "refine"),

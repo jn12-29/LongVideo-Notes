@@ -126,7 +126,8 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - `BatchedInferencePipeline` **仅在 GPU 上有 3-5x 收益**,CPU 上无收益甚至更慢;`asr/faster_whisper_local.py` 内根据 `device` 自动选择是否启用 batched
 - `condition_on_previous_text=False` 必须显式关闭,长音频中一次幻觉会通过该参数传染后续段落(faster-whisper 已知问题)
 - VAD **默认开**。faster-whisper 在静音段(非语音区间)会大量幻觉,VAD 是硬刚需而非可选优化
-- `initial_prompt` 引导加标点。中文转录普遍缺标点,给一段示例文本(带正确标点)作为 initial_prompt 显著改善
+- `word_timestamps=True`,用于按语义段时间范围切出当前段文本;一个 ASR segment 可以被分入多个语义段
+- 不传 `initial_prompt`,避免 prompt 文案被模型幻觉进转录正文
 - 输出归一化为 `Transcript` dataclass。`asr/` 不暴露 faster-whisper 原生类型给上层
 
 **配置项**(来自 `asr.*`,见 `docs/overview.md` §8):
@@ -139,7 +140,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - `asr.vad`: bool,默认 true
 - `asr.language`: ISO 639-1 字符串
 
-**缓存键**:调用 `build_cache_key("transcribe", {"audio": hash_file(ctx.paths.audio_wav), "config": hash_json(ctx.config.asr), "backend_version": hash_json(asr_backend_version_payload)})`。
+**缓存键**:调用 `build_cache_key("transcribe", {"audio": hash_file(ctx.paths.audio_wav), "config": hash_json(ctx.config.asr), "backend_version": hash_json(asr_backend_version_payload)})`。`asr_backend_version_payload` 必须包含 ASR backend 名称和转录行为版本;改变输出 schema、是否请求 word-level 识别、是否传 `initial_prompt` 等会影响转录文本或 JSON 形态的行为时,必须 bump 行为版本以让旧缓存失效。
 
 **错误处理**:
 - 模型加载失败:`asr/` 包装为 `ASRError`
@@ -157,21 +158,16 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 **实现要点**:
 - **单次 LLM 调用,不分块**。对 1-3 小时的转录,主流大模型的 context window 足够装下全文(中文转录约 1 token/字,1 小时 ≈ 20-30k token)
 - **短输出原则**(见 §2.1):LLM 输出 `SegmentList` JSON object,形如 `{"markers": [...]}`;每个 marker 含 `id / start / end / topic_hint / boundary_reason`,不复述段内文本
-- 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:任务说明 + 目标段数 hint + 最短/最长段时长约束 + 全文转录(含时间戳,按句换行)
+- 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:语义切分任务说明 + 全文转录。带 word-level 时间戳的 ASR 段会按每个词的时间戳展开进入 prompt,因此语义切分边界可以落在 ASR segment 内部的任意词级时间点。
 - 通过 `client = for_task(ctx.config, "segment")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验全部走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper,不在本 stage 自己写解析重试逻辑
 - 业务级不变量校验在 helper 之上额外做:
   1. 校验时间戳:`start < end`、`markers[i].end == markers[i+1].start`(首尾相邻)、`markers[0].start == 0`、`markers[-1].end == transcript.duration`(容差 ±200ms)
-  2. 校验段时长:每段 `end - start` 在 `[min_segment_seconds, max_segment_seconds]` 内
-  3. 任一校验失败抛 `LLMError` 含具体不变量名,触发上层重试
+  2. 任一校验失败抛 `LLMError` 含具体不变量名,触发上层重试
 
 **配置项**(`audio_pipeline.segment.*`):
-- `target_count_hint: str` —— 例如 `"15-40"`,作为 prompt 中的目标段数提示,非硬约束
-- `min_segment_seconds: float` —— 默认 30
-- `max_segment_seconds: float` —— 默认 480
+无。segment stage 只按转录内容和 prompt 做语义切分,不配置目标段数或段时长限制。
 
-`target_count_hint` 仅作为生成时的提示,不写入 `SegmentList` 数据本身;若需追溯生成参数,从 `StageOutput.metadata` 读。
-
-**缓存键**:调用 `build_cache_key("segment", {"transcript": hash_json(Transcript), "config": hash_json(segment 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/audio_pipeline/prompts/segment.jinja")})`。模板 hash 经归一化(见 §2.6)。
+**缓存键**:调用 `build_cache_key("segment", {"transcript": hash_json(Transcript), "config": hash_json(segment 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/audio_pipeline/prompts/segment.jinja"), "render": transcript_render_version})`。模板 hash 经归一化(见 §2.6)。改变 transcript 渲染粒度时必须 bump `transcript_render_version`,避免旧 segments 缓存命中。
 
 **错误处理**:
 - LLM JSON 解析 / schema 失败:由 `complete_json` helper 内 1 次修复重试覆盖;耗尽抛 `LLMError`
@@ -191,6 +187,8 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 *为什么串行*:每段 K 调 LLM 时,prompt 中包含前 K-1 段已整理产物。让 LLM "续写",保证术语、风格、详略一致。并行整理无法做到这一点。
 
 *LLM 调用*:通过 `client = for_task(ctx.config, "refine")` 获取 LLM client。单段 JSON 输出解析、修复重试与 schema 校验统一走 `complete_json(client, messages, schema, options, max_repair_retries=1)`。
+
+*当前段文本*:通过 `core.transcript.slice_transcript_text(transcript, start, end)` 按 `SegmentMarker` 时间范围切出 raw transcript。该 helper 优先使用 `TranscriptSegment.words` 的 word-level 时间戳,因此一个 ASR segment 可以被拆分到多个语义段;没有 words 时才退回整段文本。
 
 *Prompt cache 命中规则*:system message 内容**严格按以下顺序排列**:
 
@@ -243,7 +241,7 @@ LLM 输出的 `cross_refs` 必须满足:
 
 所有 dataclass `frozen=True`。`RefinedTranscript` 也保持 `frozen=True`;stage 4 累积构建期间使用局部 `list[RefinedSegment]`,全部完成后一次性构造 `RefinedTranscript`。
 
-Schema 字段不携带配置元信息(见 `coding-standards.md` §2.4)。生成时的配置(target_count_hint、模板 hash 等)由 `StageOutput.metadata` 携带。
+Schema 字段不携带配置元信息(见 `coding-standards.md` §2.4)。生成时的配置和模板 hash 等由 `StageOutput.metadata` 携带。
 
 ```python
 from dataclasses import dataclass
@@ -292,8 +290,6 @@ class SegmentMarker:
 @dataclass(frozen=True)
 class SegmentList:
     markers: list[SegmentMarker]
-    # 注:生成时的 target_count_hint 配置由 StageOutput sidecar metadata 携带,
-    # 不进数据 schema(避免数据与配置事实双源)
 
 @dataclass(frozen=True)
 class RefinedSegment:

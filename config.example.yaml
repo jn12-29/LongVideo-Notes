@@ -42,10 +42,7 @@ audio_pipeline:
   extract:
     sample_rate: 16000
     channels: 1
-  segment:
-    target_count_hint: "15-40"
-    min_segment_seconds: 30
-    max_segment_seconds: 480
+  segment: {}
   refine:
     sliding_window_token_threshold: 30000
     sliding_window_recent_segments: 5

@@ -1,6 +1,6 @@
 Return JSON matching this schema: {"markers":[{"id":0,"start":0.0,"end":60.0,"topic_hint":"...","boundary_reason":"..."}]}.
-Split the transcript into semantic segments. Target count: {{ target_count_hint }}.
-Each segment should be between {{ min_segment_seconds }} and {{ max_segment_seconds }} seconds when possible.
+Split the transcript into semantic segments using natural topic boundaries.
+The transcript may contain word-level timestamps. Segment boundaries may use any shown timestamp, including timestamps inside an ASR segment.
 Cover the full duration from 0.000 to {{ duration }} without gaps.
 
 Transcript:

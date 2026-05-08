@@ -16,6 +16,7 @@ from lvnotes.core.schemas import (
     VisualSegmentList,
     VisualSelection,
 )
+from lvnotes.core.transcript import slice_transcript_text
 
 _REF_MARKER_RE = re.compile(r"\[\[REF:\d+\]\]")
 
@@ -63,7 +64,7 @@ class AudioArtifacts:
         if start < 0 or end > duration:
             raise ValueError("time range is outside audio duration")
         if prefer_raw:
-            pieces = [segment.text for segment in self.get_transcript().segments if _intersects(segment.start, segment.end, start, end, strict)]
+            return slice_transcript_text(self.get_transcript(), start, end)
         else:
             pieces = [segment.cleaned_text for segment in self.get_refined().segments if _intersects(segment.start, segment.end, start, end, strict)]
             if strip_refs:

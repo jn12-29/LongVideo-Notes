@@ -9,6 +9,7 @@ from lvnotes.core.pipeline import StageOutput
 from lvnotes.audio_pipeline._common import cache_output, cached_output
 
 log = logging.getLogger(__name__)
+TRANSCRIBE_BEHAVIOR_VERSION = "word_timestamps_no_initial_prompt_v1"
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -17,7 +18,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     config_hash = hash_json(ctx.config.asr)
     cache_key = build_cache_key(
         "transcribe",
-        {"audio": audio_hash, "config": config_hash, "backend_version": hash_json({"backend": ctx.config.asr.backend})},
+        {"audio": audio_hash, "config": config_hash, "backend_version": hash_json({"backend": ctx.config.asr.backend, "behavior": TRANSCRIBE_BEHAVIOR_VERSION})},
     )
     output_paths = [ctx.paths.transcript_raw_json]
     if not ctx.no_cache:

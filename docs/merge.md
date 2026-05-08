@@ -356,7 +356,7 @@ class Chapter:
 @dataclass(frozen=True)
 class Outline:
     chapters: list[Chapter]
-    # 注:不含 config_hash / target_count_hint;由 StageOutput sidecar metadata 携带
+    # 注:不含 config_hash / runtime_hint;由 StageOutput sidecar metadata 携带
 ```
 
 注：`Chapter` 不含 `anchor` 字段。anchor 由 assemble 阶段从 `(id, title)` 生成（`make_chapter_anchor` 函数），不持久化在 schema 里。这样 schema 字段都是真"内容"，避免跨 stage 字段延迟填充导致的不可变性破例。

@@ -462,10 +462,7 @@ audio_pipeline:
   extract:
     sample_rate: 16000 # 重采样目标,可选 8000/16000/22050/32000/44100/48000
     channels: 1 # 重采样目标,1 (mono) 或 2 (stereo)
-  segment:
-    target_count_hint: "15-40"
-    min_segment_seconds: 30
-    max_segment_seconds: 480
+  segment: {}
   refine:
     sliding_window_token_threshold: 30000
     sliding_window_recent_segments: 5

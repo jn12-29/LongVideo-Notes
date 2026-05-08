@@ -5,8 +5,10 @@ import pytest
 
 from lvnotes.core.cache import build_cache_key, hash_json
 from lvnotes.core.serialization import from_jsonable, to_jsonable
+from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
 from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, format_mmss, parse_ts_marker, render_timestamp
+from lvnotes.core.transcript import slice_transcript_text
 
 
 @dataclass(frozen=True)
@@ -57,3 +59,69 @@ def test_invalid_timestamp_marker_raises() -> None:
 def test_chapter_anchor_keeps_cjk_and_prefix() -> None:
     assert make_chapter_anchor(3, " 第一章: 概念 / Demo ").startswith("chapter-3-")
     assert "第一章" in make_chapter_anchor(3, " 第一章: 概念 / Demo ")
+
+
+def test_slice_transcript_text_uses_words_for_partial_segment() -> None:
+    transcript = Transcript(
+        segments=[
+            TranscriptSegment(
+                id=0,
+                start=0.0,
+                end=10.0,
+                text="abcdef",
+                words=[
+                    WordTimestamp("ab", 0.0, 2.0, 1.0),
+                    WordTimestamp("cd", 2.0, 5.0, 1.0),
+                    WordTimestamp("ef", 5.0, 10.0, 1.0),
+                ],
+            )
+        ],
+        language="zh",
+        duration=10.0,
+    )
+
+    assert slice_transcript_text(transcript, 0.0, 5.0) == "abcd"
+    assert slice_transcript_text(transcript, 5.0, 10.0) == "ef"
+
+
+def test_slice_transcript_text_allows_zero_duration_words() -> None:
+    transcript = Transcript(
+        segments=[
+            TranscriptSegment(
+                id=0,
+                start=0.0,
+                end=2.0,
+                text="abc",
+                words=[
+                    WordTimestamp("a", 0.0, 0.0, 1.0),
+                    WordTimestamp("b", 1.0, 1.0, 1.0),
+                    WordTimestamp("c", 2.0, 2.0, 1.0),
+                ],
+            )
+        ],
+        language="zh",
+        duration=2.0,
+    )
+
+    assert slice_transcript_text(transcript, 0.0, 1.5) == "ab"
+
+
+def test_slice_transcript_text_preserves_word_spacing() -> None:
+    transcript = Transcript(
+        segments=[
+            TranscriptSegment(
+                id=0,
+                start=0.0,
+                end=2.0,
+                text="hello world",
+                words=[
+                    WordTimestamp("hello", 0.0, 1.0, 1.0),
+                    WordTimestamp(" world", 1.0, 2.0, 1.0),
+                ],
+            )
+        ],
+        language="en",
+        duration=2.0,
+    )
+
+    assert slice_transcript_text(transcript, 0.0, 2.0) == "hello world"
