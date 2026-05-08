@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-多模管线由 5 个 stage 顺序执行，仅在多模模式下启用。第一版默认 `visual_pipeline.enabled: false`，可以先创建目录和占位接口，不要求实现完整视觉处理。
+多模管线由 5 个 stage 顺序执行，仅在多模模式下启用。第一版可以先创建目录和占位接口，不要求实现完整视觉处理。
 
 | Stage | 名称 | 主要工具 | 主要产物 |
 |---|---|---|---|
@@ -64,11 +64,11 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：输入视频路径（来自 `ctx.input_path`）。
 
-**Output**：采样帧目录 + `VisualSampleIndex`。落盘到 `cache/{hash}/visual/frames/` 与 `cache/{hash}/visual/sample.json`。
+**Output**：采样帧目录 + `VisualSampleIndex`。落盘到 `cache/{input_hash}/visual/frames/` 与 `cache/{input_hash}/visual/sample.json`。
 
 **实现要点**：
 - 走 `media/video.py` 的抽帧函数，禁止直接 `subprocess.run`
-- 输入是音频文件或 `--audio-only` 时本 stage 不运行
+- 输入是音频文件或未显式传 `--mm` 时本 stage 不运行;显式传 `--mm` 但 `visual_pipeline.enabled=false` 时由 CLI 配置校验阶段报错
 - 帧文件命名必须稳定，包含时间戳或帧序号，便于断点续跑与人工检查
 
 **配置项**（`visual_pipeline.sample.*`）：
@@ -86,7 +86,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`VisualSampleIndex`。
 
-**Output**：`VisualSegmentList`，落盘 `cache/{hash}/visual/segments.json`。
+**Output**：`VisualSegmentList`，落盘 `cache/{input_hash}/visual/segments.json`。
 
 **实现要点**：
 - 使用 pHash 距离做主判断，直方图差异做辅助判断
@@ -107,7 +107,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`VisualSegmentList` + 每段首 / 中 / 末帧。
 
-**Output**：`VisualJudgementList`，落盘 `cache/{hash}/visual/judgements.json`。
+**Output**：`VisualJudgementList`，落盘 `cache/{input_hash}/visual/judgements.json`。
 
 **实现要点**：
 - 每段最多传首 / 中 / 末三帧给弱 VLM
@@ -126,7 +126,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`VisualJudgementList` + 采样帧。
 
-**Output**：`VisualSelectionList`，落盘 `cache/{hash}/visual/selections.json`。
+**Output**：`VisualSelectionList`，落盘 `cache/{input_hash}/visual/selections.json`。
 
 **实现要点**：
 - `is_meaningful=False` 的段不产出代表帧
@@ -145,7 +145,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`VisualSelectionList` + `AudioArtifacts.get_text_at(start, end, strip_refs=True)`。
 
-**Output**：`VisualDescriptionList`，落盘 `cache/{hash}/visual/descriptions.json`。
+**Output**：`VisualDescriptionList`，落盘 `cache/{input_hash}/visual/descriptions.json`。
 
 **实现要点**：
 - 启动前由 CLI 调度层保证 `AudioArtifacts.is_complete() == True`
@@ -236,7 +236,7 @@ class VisualDescription:
 
 ```python
 class VisualArtifacts:
-    def __init__(self, video_hash: str, paths: Paths) -> None: ...
+    def __init__(self, input_hash: str, paths: Paths) -> None: ...
 
     def get_samples(self) -> VisualSampleIndex: ...
     def get_segments(self) -> VisualSegmentList: ...
@@ -293,12 +293,14 @@ lvnotes/visual_pipeline/
 - `media/`：sample 用
 - `llm/`：judge、describe 用
 
-### 外部库
+### 预计涉及的外部库
 
 - `imagehash`：pHash 计算
 - `opencv-python`：直方图、清晰度评分
 - `Pillow`：图像处理
 - `jinja2`：渲染 prompt 模板
+
+具体依赖清单与版本以后续 `pyproject.toml` 为准。
 
 ---
 

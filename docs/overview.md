@@ -37,10 +37,10 @@
 
 ### 2.2 处理模式
 
-- **纯音频模式**:只走音频管线,产出基于讲解内容的笔记。适用于音频文件、或视频但不需要画面信息的场景。
-- **多模模式**:音频管线 + 多模管线并行,画面和讲解联合生成笔记。适用于含 PPT / 板书 / 代码演示的教学视频。
+- **纯音频模式**:默认模式。只走音频管线,产出基于讲解内容的笔记。适用于音频文件、或视频但不需要画面信息的场景。
+- **多模模式**:显式传 `--mm` 时启用。音频管线 + 多模管线并行,画面和讲解联合生成笔记。适用于含 PPT / 板书 / 代码演示的教学视频。
 
-模式由 CLI 参数或配置决定。输入是音频文件时强制纯音频模式;输入是视频文件时默认多模,可用 `--audio-only` 强制纯音频。
+模式由 CLI 参数优先决定。输入是音频文件时强制纯音频模式;输入是视频文件时默认纯音频模式,显式传 `--mm` 才启用多模。配置中的 `visual_pipeline.enabled` 只作为多模能力开关:未传 `--mm` 时不会启动多模;传了 `--mm` 但该配置为 `false` 时直接报配置错误,避免用户以为已经启用画面处理。
 
 ### 2.3 输出
 
@@ -119,8 +119,8 @@ Stage 2 用滑动窗口聚类(双阈值 + 跟段首累积比对),把相邻渐变
 
 ```
 longvideo-notes/
-├── pyproject.toml
-├── .importlinter                (依赖契约,CI 强制)
+├── pyproject.toml              (计划创建)
+├── .importlinter                (计划创建;依赖契约,CI 强制)
 ├── config.example.yaml           (计划创建的完整配置示例)
 ├── README.md                    (项目入口与文档索引)
 
@@ -136,7 +136,7 @@ longvideo-notes/
 │
 ├── lvnotes/
 │   ├── __init__.py
-│   ├── __main__.py              (python -m lvnotes 入口)
+│   ├── __main__.py              (模块入口)
 │   │
 │   ├── core/                    (框架层,被所有模块依赖)
 │   │   ├── schemas/             (跨模块 dataclass 包)
@@ -211,7 +211,7 @@ longvideo-notes/
 │   └── integration/
 │
 └── cache/                       (运行时产生,gitignore)
-    └── {video_hash}/
+    └── {input_hash}/
         ├── audio/
         ├── visual/              (多模模式下)
         ├── transcript_raw.json
@@ -331,8 +331,8 @@ longvideo-notes/
 
 **原则**:
 
-- 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes <stage>`、`lvnotes inspect`、`lvnotes clean`。
-- 调度结构按双管线设计(`asyncio.gather` 并行启动),即使第一版只跑音频管线,骨架也按双管线写,多模管线 disabled 时跳过该协程。
+- 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes inspect`、以及顶层 stage 命令(如 `lvnotes extract`、`lvnotes transcribe`、`lvnotes outline`、`lvnotes assemble`)。
+- 调度结构按双管线设计。调度层可以并发执行音频管线和多模管线,但每个 stage 对外仍固定暴露同步 `run(ctx) -> StageOutput` 接口;多模管线 disabled 时直接跳过。
 - 不在 CLI 写业务逻辑。CLI 只负责"解析参数 → 配置 Pipeline → 启动 → 处理输出"。
 
 ---
@@ -385,7 +385,7 @@ longvideo-notes/
 ```yaml
 project:
   cache_dir: ./cache
-  output_dir: ./output
+  output_dir: ./output # 最终 note.md 写入这里;cache 内 note.md 作为可复查的中间产物
 
 llm:
   active_default: gpt5_main
@@ -437,7 +437,7 @@ audio_pipeline:
     sliding_window_recent_segments: 5
 
 visual_pipeline:
-  enabled: false # 第一版默认关
+  enabled: true # 多模能力开关;默认配置建议为 true,但只有显式传 --mm 才会实际启动
   sample:
     fps: 1
   cluster:
@@ -451,14 +451,13 @@ merge:
   section:
     concurrent_calls: 5
     timestamp_format: "[{hms}]" # 渲染形态;支持 {hms} {mmss} {seconds} {seconds_int}
-      # LLM 输出走内部 marker [[TS:seconds]],由 assemble 替换
+    # LLM 输出走内部 marker [[TS:seconds]],由 assemble 替换
     include_visuals: true # 多模模式下章节内嵌入视觉描述与图片
   assemble:
     include_toc: true # 顶部目录
     include_metadata: true # YAML frontmatter(输入路径、时长、模式等)
-    video_url_template:
-      null # 默认时间戳为纯文本;配置后渲染为跳转链接
-      # 例: "file://{video_path}?t={seconds_int}"
+    video_url_template: null # 默认时间戳为纯文本;配置后渲染为跳转链接
+    # 例: "file://{video_path}?t={seconds_int}"
     top_title: null # null 时从输入文件名派生
 ```
 
@@ -466,24 +465,9 @@ merge:
 
 ## 9. 依赖
 
-核心运行时依赖(版本见 `pyproject.toml`):
+项目尚未进入代码实现与环境配置阶段,依赖清单暂不固定。后续创建 `pyproject.toml` 时再以实际实现为准补齐运行时依赖与 dev 依赖。
 
-| 库                      | 用途                               | 备注                               |
-| ----------------------- | ---------------------------------- | ---------------------------------- |
-| `faster-whisper` >= 1.0 | 本地 ASR                           | 1.0+ 支持 BatchedInferencePipeline |
-| `openai` >= 1.50        | OpenAI Chat / Responses 协议客户端 | 用于所有 OpenAI 兼容 endpoint      |
-| `anthropic` >= 0.40     | Anthropic 原生协议客户端           |                                    |
-| `pydantic` >= 2.5       | 数据 schema、配置 schema           |                                    |
-| `pydantic-settings`     | 配置加载(YAML + 环境变量)          |                                    |
-| `jinja2`                | Prompt 模板                        |                                    |
-| `typer`                 | CLI                                |                                    |
-| `imagehash`             | pHash 计算(多模管线)               |                                    |
-| `opencv-python`         | 直方图、清晰度评分(多模管线)       |                                    |
-| `Pillow`                | 图像处理                           |                                    |
-| `tenacity`              | API 重试                           |                                    |
-| `import-linter`         | CI 期间强制依赖契约                | dev-only                           |
-
-系统依赖:`ffmpeg`(必须)。
+系统层面预计需要 `ffmpeg`,但安装与版本要求等实现阶段再确认。
 
 ---
 

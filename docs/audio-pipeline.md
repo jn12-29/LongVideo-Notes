@@ -93,7 +93,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **Input**:输入文件路径(来自 `ctx.input_path`)。
 
-**Output**:`AudioExtractResult`(schema 见 §4)。落盘 `cache/{hash}/audio/audio.wav` + `cache/{hash}/audio/extract.json`。
+**Output**:`AudioExtractResult`(schema 见 §4)。落盘 `cache/{input_hash}/audio/audio.wav` + `cache/{input_hash}/audio/extract.json`。
 
 **实现要点**:
 - 走 `media/audio.py` 的 `extract_wav(input_path, output_path, sample_rate, channels)` 调用,**禁止直接 `subprocess.run`**
@@ -118,7 +118,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **Input**:`ctx.artifacts.get_extract()` 拿 `AudioExtractResult`。
 
-**Output**:`Transcript`(schema 见 §4)。落盘 `cache/{hash}/transcript_raw.json`(经 `atomic_write_json`)。
+**Output**:`Transcript`(schema 见 §4)。落盘 `cache/{input_hash}/transcript_raw.json`(经 `atomic_write_json`)。
 
 **实现要点**:
 - 走 `asr/` 的 `Transcriber.transcribe(audio_path, asr_config) -> Transcript`,**禁止直接 import `faster_whisper`**
@@ -152,7 +152,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **Input**:`ctx.artifacts.get_transcript()` 拿 `Transcript`。
 
-**Output**:`SegmentList`(schema 见 §4)。落盘 `cache/{hash}/segments.json`(经 `atomic_write_json`)。
+**Output**:`SegmentList`(schema 见 §4)。落盘 `cache/{input_hash}/segments.json`(经 `atomic_write_json`)。
 
 **实现要点**:
 - **单次 LLM 调用,不分块**。对 1-3 小时的转录,主流大模型的 context window 足够装下全文(中文转录约 1 token/字,1 小时 ≈ 20-30k token)
@@ -184,7 +184,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **Input**:`ctx.artifacts.get_transcript()` + `ctx.artifacts.get_segments()`。
 
-**Output**:每段 `RefinedSegment` 落盘到 `cache/{hash}/refined/{seg_id:04d}.json`(经 `atomic_write_json`),全部完成后汇总为 `RefinedTranscript`,落盘 `cache/{hash}/refined_transcript.json`(同样经 `atomic_write_json`)。
+**Output**:每段 `RefinedSegment` 落盘到 `cache/{input_hash}/refined/{seg_id:04d}.json`(经 `atomic_write_json`),全部完成后汇总为 `RefinedTranscript`,落盘 `cache/{input_hash}/refined_transcript.json`(同样经 `atomic_write_json`)。
 
 **实现要点**:
 
@@ -333,7 +333,7 @@ class RefinedTranscript:
 
 ```python
 class AudioArtifacts:
-    def __init__(self, video_hash: str, paths: Paths) -> None: ...
+    def __init__(self, input_hash: str, paths: Paths) -> None: ...
 
     # ---- 主产物访问 ----
     def get_extract(self) -> AudioExtractResult: ...
@@ -445,7 +445,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - `ctx.config: Config`
 - `ctx.paths: Paths`
 - `ctx.artifacts: AudioArtifacts`
-- `ctx.video_hash: str`
+- `ctx.input_hash: str`
 
 `StageOutput` 定义在 `core/pipeline.py`,是带缓存元数据的 stage 返回类型。具体 schema 在 `core/pipeline.py` 文档中描述,本文不重复。
 
@@ -464,7 +464,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 | `faster_whisper` 直接 import | ❌(必须经 `asr/`) |
 | `subprocess` 调 ffmpeg | ❌(必须经 `media/`) |
 
-以上规则由 `.importlinter` 契约文件强制,CI 检查。
+进入实现阶段后,以上规则由 `.importlinter` 契约文件强制,CI 检查。
 
 ---
 
@@ -476,16 +476,18 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - `asr/`:stage 2 用
 - `media/`:stage 1 用
 
-### 外部库
-本管线**直接**依赖:
+### 预计涉及的外部库
+本管线预计**直接**使用:
 - `jinja2`:渲染 prompt 模板
 - `pydantic`:配置加载(间接,经 `core/config.py`)
 - `tenacity`:API 重试(间接,经 `llm/`)
 
-本管线**不直接**依赖:
+本管线预计**不直接**使用:
 - `faster-whisper`:仅经 `asr/faster_whisper_local.py` 使用
 - `openai` / `anthropic`:仅经 `llm/` 使用
 - `ffmpeg-python` / `subprocess`:仅经 `media/` 使用
+
+具体依赖清单与版本以后续 `pyproject.toml` 为准。
 
 ---
 
@@ -501,7 +503,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 2. 缓存机制工作(再跑一次能命中缓存,跳过该 stage 的实际计算)
 3. 错误路径有测试覆盖(至少 1 个错误输入 → 抛预期异常的测试)
 4. 类型检查通过(`pyright` 或 `mypy --strict`),`import-linter` 通过
-5. 独立 CLI 调用可用(如 `python -m lvnotes extract <input>`、`python -m lvnotes transcribe`)
+5. 独立 CLI 调用可用(如 `lvnotes extract <input>`、`lvnotes transcribe`)
 6. 至少一个其他模块的范例参照(除第一个 stage 外)
 
 任意一条不满足不算完成,不要进下一个 stage。

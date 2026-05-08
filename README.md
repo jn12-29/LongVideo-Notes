@@ -19,10 +19,12 @@
 
 ```bash
 lvnotes run <input-file>
-lvnotes run <input-file> --audio-only
+lvnotes run <input-file> --mm
 lvnotes inspect <stage>
 lvnotes assemble --no-cache
 ```
+
+默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
 
 当前命令尚未实现，具体行为以 `docs/overview.md` 和各管线文档为准。
 

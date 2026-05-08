@@ -74,7 +74,7 @@ assemble 阶段做纯逻辑替换：
 def run(ctx: PipelineContext) -> StageOutput: ...
 ```
 
-合并阶段不通过 `AudioArtifacts` 风格的接口对外暴露产物（因为没有 downstream 模块），stage 间通过 `ctx.paths` 按文件 IO 传递，与 audio_pipeline 一致。
+合并阶段不通过 `AudioArtifacts` 风格的接口对外暴露产物（因为没有 downstream 模块），stage 间通过 `ctx.paths` 按文件 IO 传递。
 
 ### 3.1 Stage 1: unify
 
@@ -84,7 +84,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - `ctx.artifacts.audio.get_refined()` → `RefinedTranscript`
 - `ctx.artifacts.visual.get_segments()` 与 `ctx.artifacts.visual.get_descriptions()`（多模模式时；纯音频模式 `ctx.artifacts.visual is None`）
 
-**Output**：`list[ContentBlock]`（schema 见 §4）。落盘 `cache/{hash}/content_blocks.json`。
+**Output**：`list[ContentBlock]`（schema 见 §4）。落盘 `cache/{input_hash}/content_blocks.json`。
 
 **实现要点**：
 
@@ -117,9 +117,9 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **职责**：LLM 看所有 ContentBlock 的 summary，输出章节结构。
 
-**Input**：`list[ContentBlock]`（从 `cache/{hash}/content_blocks.json` 读）。
+**Input**：`list[ContentBlock]`（从 `cache/{input_hash}/content_blocks.json` 读）。
 
-**Output**：`Outline`（schema 见 §4）。落盘 `cache/{hash}/outline.json`。
+**Output**：`Outline`（schema 见 §4）。落盘 `cache/{input_hash}/outline.json`。
 
 **实现要点**：
 - **单次 LLM 调用，不分块**。即使章节数 100+，summary 总量也远小于全文转录
@@ -149,7 +149,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`Outline` + `list[ContentBlock]`。
 
-**Output**：每章一个 markdown 文件，落盘 `cache/{hash}/sections/{chapter_id:03d}.md`。
+**Output**：每章一个 markdown 文件，落盘 `cache/{input_hash}/sections/{chapter_id:03d}.md`。
 
 **实现要点**：
 
@@ -158,7 +158,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 2. 全 outline 章节摘要（所有章的 `id / title / summary`）—— 让 LLM 理解本章在全文中的位置
 3. 本章涉及的 ContentBlock 列表（按 id 序），每个 block 含 `id / start / end / topic / cleaned_text / visuals`
 
-*并发*：用 `asyncio.Semaphore(concurrent_calls)` 控制并发上限。每章一个 task。
+*并发*：可用 `asyncio.Semaphore(concurrent_calls)` 或等价机制控制并发上限。每章一个任务,但不改变 stage 对外的同步 `run(ctx) -> StageOutput` 签名。
 
 *内部 marker 保留*：refine 阶段产出的 `[[REF:N]]` 跨段引用 marker **原样保留在输出 markdown 中**。prompt 中明确指示 LLM "见到形如 `[[REF:N]]` 的标记一律原样输出，不要替换、删除、改写"。链接化由 assemble 阶段做。
 
@@ -196,7 +196,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`Outline` + `list[ContentBlock]` + `sections/{i:03d}.md` × N。
 
-**Output**：`cache/{hash}/note.md`，**最终用户产物**。
+**Output**：`cache/{input_hash}/note.md`，并复制或写入 `project.output_dir` 下的 `note.md` 作为**最终用户产物**。
 
 **实现要点**：
 
@@ -303,7 +303,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class VisualSlot:
-    frame_path: Path                # 代表帧文件路径，相对 cache/{hash}/visual/frames/
+    frame_path: Path                # 代表帧文件路径，相对 cache/{input_hash}/visual/frames/
     description: str                # 强 VLM 输出的图文联合描述
     medium: str                     # judge 阶段输出，"ppt" / "blackboard" / "code" / "demo" / "other"
     start: float                    # clip 到所属 ContentBlock 区间内的起点
@@ -368,14 +368,15 @@ class Outline:
 
 ### 稳定的产物
 
-- `cache/{hash}/note.md` —— 最终 Markdown 笔记（UTF-8）。用户最终读这个
-- `cache/{hash}/outline.json` —— `Outline` 序列化，便于工具按章节切分笔记或重新生成单章
-- `cache/{hash}/sections/{chapter_id:03d}.md` —— 各章独立 markdown，便于用户单独编辑后重新 assemble
-- `cache/{hash}/content_blocks.json` —— `list[ContentBlock]` 序列化，调试用
+- `cache/{input_hash}/note.md` —— Markdown 笔记缓存副本（UTF-8），便于调试与断点续跑
+- `project.output_dir/note.md` —— 最终用户产物
+- `cache/{input_hash}/outline.json` —— `Outline` 序列化，便于工具按章节切分笔记或重新生成单章
+- `cache/{input_hash}/sections/{chapter_id:03d}.md` —— 各章独立 markdown，便于用户单独编辑后重新 assemble
+- `cache/{input_hash}/content_blocks.json` —— `list[ContentBlock]` 序列化，调试用
 
 ### CLI 访问入口
 
-CLI 提供 `lvnotes inspect <stage>` 查看任意中间产物，`lvnotes <stage>` 单独重跑某一 stage（具体命令在 `cli/app.py` 文档中描述）。
+CLI 提供 `lvnotes inspect <stage>` 查看任意中间产物，并通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline`、`lvnotes assemble`；实现时在 `cli/app.py` 中描述）。
 
 ### 用户编辑流程支持
 
@@ -403,7 +404,7 @@ lvnotes/merge/
     └── section.jinja
 ```
 
-每个 stage `run(ctx) -> StageOutput`。`section.py` 内部用 `asyncio` 实现并发；如果 `cli/app.py` 已经在 asyncio 调度下，section 可直接 `async def run`，否则 section 内部起 `asyncio.run(...)`。
+每个 stage 固定暴露同步接口 `run(ctx) -> StageOutput`。`section.py` 可在该同步接口内部实现并发细节，但不改变 stage 对外签名。
 
 ### Import 规则速查
 
@@ -426,12 +427,14 @@ lvnotes/merge/
 - `core/`：`schemas`、`artifacts`、`paths`、`timestamps`、`pipeline`、`cache`、`config`、`context`、`logging`、`exceptions`
 - `llm/`：outline、section 用
 
-### 外部库
+### 预计涉及的外部库
 - `jinja2`：渲染 prompt 模板
 - `pydantic`：配置加载（间接，经 `core/config.py`）
 - `tenacity`：API 重试
 
-不依赖 `media/` `asr/` 及其外部库。
+具体依赖清单与版本以后续 `pyproject.toml` 为准。
+
+不依赖 `media/` `asr/` 及其预计涉及的外部库。
 
 ---
 
@@ -464,7 +467,7 @@ lvnotes/merge/
 2. 缓存机制工作（再跑一次能命中缓存）
 3. 错误路径有测试覆盖
 4. 类型检查通过
-5. 独立 CLI 调用可用（如 `python -m lvnotes outline`、`python -m lvnotes assemble --no-cache`）
+5. 独立 CLI 调用可用（如 `lvnotes outline`、`lvnotes assemble --no-cache`）
 6. 至少一个其他模块的范例参照（除第一个 stage 外，参照 `audio_pipeline/refine.py` 等）
 
 任意一条不满足不算完成，不要进下一个 stage。

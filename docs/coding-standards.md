@@ -43,7 +43,7 @@ def f(x: List[int], y: Optional[str] = None) -> Dict[str, int]: ...
 
 ### 1.4 类型检查与依赖检查在 CI 中强制
 
-项目根目录配置 `pyright` 或 `mypy --strict`,以及 `import-linter`(契约见 `.importlinter`,落实 `docs/overview.md` §6 的单向依赖与唯一入口规则)。CI 阶段任一不通过则 PR 不能合并。
+进入实现阶段后,项目根目录配置 `pyright` 或 `mypy --strict`,以及 `import-linter`(契约见计划创建的 `.importlinter`,落实 `docs/overview.md` §6 的单向依赖与唯一入口规则)。CI 阶段任一不通过则 PR 不能合并。
 
 ## 2. 数据结构
 
@@ -190,7 +190,7 @@ log = logging.getLogger(__name__)
 ### 4.3 日志内容规范
 
 - 不打印敏感信息(API key、完整 token、原始音频内容)
-- 日志条目应可被 grep:包含可识别的 stage 名 / 阶段名 / video_hash
+- 日志条目应可被 grep:包含可识别的 stage 名 / 阶段名 / input_hash
 - 长内容(如 prompt 全文)打 DEBUG,且写入文件而非控制台
 
 ## 5. 配置
@@ -561,21 +561,21 @@ def test_baz():
 
 ## 16. 第三方库
 
-### 16.1 用文档指定的版本
+### 16.1 依赖版本以后续配置为准
 
-`pyproject.toml` 中的版本约束是**经过验证的**。不要:
+项目当前尚未创建 `pyproject.toml` 与运行环境。进入实现阶段后,依赖版本以 `pyproject.toml` 中的约束为准。不要:
 
-- "升级到最新版"
-- "降级到我熟悉的版本"
+- 未经讨论临时安装新依赖
+- 凭经验选择版本后直接写进配置
 - 引入文档没列出的新依赖
 
-如果你认为需要新依赖,先在 PR 中提出讨论,不要直接 `pip install` + 加进 `pyproject.toml`。
+如果你认为需要新依赖,先在 PR 中提出讨论,不要直接 `pip install` + 加进项目配置。
 
 ### 16.2 用现代 API
 
 文档会指明每个关键库的"标准用法"。如果你的训练数据中有该库的旧用法,**以文档指定为准**。
 
-特别注意:
+如果后续采用这些库,特别注意:
 
 - `faster-whisper` 1.0+ 的 `BatchedInferencePipeline` 是新 API
 - `openai` 1.0+ 的客户端 API 跟 0.x 完全不同
@@ -590,7 +590,7 @@ def test_baz():
 
 ### 16.4 第三方库的 import 规则受 import-linter 强制
 
-`docs/overview.md` §6 的"唯一入口规则"以 `.importlinter` 契约落地,CI 检查。新增模块或调整依赖时优先改契约文件,而不是绕开。
+进入实现阶段后,`docs/overview.md` §6 的"唯一入口规则"以 `.importlinter` 契约落地,CI 检查。新增模块或调整依赖时优先改契约文件,而不是绕开。
 
 ## 17. 测试的诚实性
 
