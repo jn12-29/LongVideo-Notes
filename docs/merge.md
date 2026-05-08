@@ -97,10 +97,11 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 对每对 `(audio_segment, visual_description)`：
 
 1. 若 `[audio.start, audio.end]` 与 `[visual.start, visual.end]` 不相交 → 跳过
-3. 否则在该 audio 段对应的 ContentBlock 上创建一个 `VisualSlot`：
+2. 否则在该 audio 段对应的 ContentBlock 上创建一个 `VisualSlot`：
    - `slot.start = max(audio.start, visual_description.start)`
    - `slot.end = min(audio.end, visual_description.end)`
-   - `slot.image_source_path` / `slot.description` / `slot.medium` / `slot.visual_segment_id` 从 `VisualDescription` 复制
+   - `slot.image_source_path` / `slot.description` / `slot.medium` 从 `VisualDescription` 复制
+   - `slot.visual_segment_id = visual_description.segment_id`
 
 跨越多个 audio 段的 visual description 会在每个被跨越的 ContentBlock 内各挂一个 VisualSlot（指向同一张 frame 和同一段 description，但时间区间各自 clip）。一个 audio 段内的多个 visual description 全部挂上，按时间排序。
 
@@ -236,7 +237,7 @@ Template 支持的占位符：
 |---|---|
 | `{seconds}` | 浮点秒数（含毫秒，3 位小数） |
 | `{seconds_int}` | 整数秒（向下取整） |
-| `{source_path}` | 输入文件绝对路径，可能是音频或视频 |
+| `{source_path}` | 解析后的绝对本地输入路径，可能是音频或视频 |
 | `{source_filename}` | 输入文件名（不含路径） |
 | `{hms}` | hh:mm:ss 格式 |
 
@@ -256,7 +257,7 @@ frontmatter 中的 `mode` 来自 `PipelineContext` 中由 CLI 构造的本次运
 
 ```markdown
 ---
-source_path: <输入文件原始路径>
+source_path: <解析后的绝对本地输入路径>
 duration: <hh:mm:ss>
 generated_at: <UTC ISO-8601>
 mode: audio_only | multimodal

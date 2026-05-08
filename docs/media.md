@@ -105,11 +105,6 @@ class MediaProbeResult:
     duration: float
     audio: AudioStreamInfo | None
     video: VideoStreamInfo | None
-
-@dataclass(frozen=True)
-class ExtractedFrame:
-    path: Path
-    timestamp: float
 ```
 
 公开函数:
@@ -171,6 +166,11 @@ audio_path = extract_wav(
 职责:封装视频帧抽取。
 
 ```python
+@dataclass(frozen=True)
+class ExtractedFrame:
+    path: Path
+    timestamp: float
+
 def extract_frames(
     input_path: Path,
     output_dir: Path,

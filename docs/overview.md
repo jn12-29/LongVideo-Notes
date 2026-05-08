@@ -132,7 +132,7 @@ longvideo-notes/
 │   ├── asr.md                   (ASR 抽象详细设计)
 │   ├── cli.md                   (CLI 命令与调度详细设计)
 │   ├── audio-pipeline.md        (音频管线详细设计)
-│   ├── visual-pipeline.md       (多模管线详细设计,第一版可占位)
+│   ├── visual-pipeline.md       (多模管线详细设计,第一版实现可占位)
 │   ├── merge.md                 (合并阶段详细设计)
 │   ├── coding-standards.md      (开发规范,所有模块必读)
 │   ├── overview.md              (本文档)
@@ -191,7 +191,7 @@ longvideo-notes/
 │   │       ├── segment.jinja
 │   │       └── refine.jinja
 │   │
-│   ├── visual_pipeline/         (多模管线,第一版可空目录)
+│   ├── visual_pipeline/         (多模管线,第一版可仅保留目录、prompt 占位和接口骨架)
 │   │   ├── sample.py
 │   │   ├── cluster.py
 │   │   ├── judge.py
@@ -344,11 +344,11 @@ segments = complete_json(client, messages, SegmentList, options)
 - 同 `audio_pipeline/` 的原则。
 - 通过 `AudioArtifacts` 接口读音频管线的产物(仅 stage 5 describe 需要)。
 - **不引用 `audio_pipeline/` 内部模块**,只用 `AudioArtifacts`。
-- 第一版可以只创建目录和占位文件,并在 `docs/visual-pipeline.md` 中声明"未实现"。
+- 第一版可以只保留目录、prompt 占位和 `VisualArtifacts` 接口骨架,完整视觉 stage 后续实现。
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
 
-**字段命名约定**:视觉相关 schema 使用 `richest_frame_id` 表示 judge 选出的信息量最高帧,使用 `image_source_path` 表示后续 Markdown 可引用的图片源路径。合并阶段消费视觉信息时沿用这些字段语义,不再引入 `richest_frame`、`frame_path` 等同义字段。全局 `source_path` 只表示原始输入音频/视频路径。
+**字段命名约定**:视觉相关 schema 使用 `richest_frame_id` 表示 judge 选出的信息量最高帧,使用 `image_source_path` 表示相对 `visual_frames_dir` 的图片源路径;最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。合并阶段消费视觉信息时沿用这些字段语义,不再引入 `richest_frame`、`frame_path` 等同义字段。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
 
 ### 5.7 `merge/` —— 合并与笔记生成
 

@@ -181,6 +181,7 @@ schema 规则:
 
 ```python
 class AudioArtifacts:
+    def __init__(self, input_hash: str, paths: PipelinePaths) -> None: ...
     def get_extract(self) -> AudioExtractResult: ...
     def get_transcript(self) -> Transcript: ...
     def get_segments(self) -> SegmentList: ...
@@ -203,6 +204,7 @@ class AudioArtifacts:
 
 ```python
 class VisualArtifacts:
+    def __init__(self, input_hash: str, paths: PipelinePaths) -> None: ...
     def get_samples(self) -> VisualSampleIndex: ...
     def get_segments(self) -> VisualSegmentList: ...
     def get_judgements(self) -> VisualJudgementList: ...
@@ -215,6 +217,7 @@ class VisualArtifacts:
 
 - getter 惰性加载并缓存到实例字段
 - 路径全部经 `core/paths.py`
+- Artifacts 不持有 `AppConfig`;依赖未落盘产物的方法在产物缺失时抛 `CacheError`
 - 产物缺失时抛 `CacheError` 并说明可能未运行的 stage
 - `is_complete()` 只做轻量存在性检查,不做 schema 校验
 - 不 import `audio_pipeline/` 或 `visual_pipeline/`
@@ -265,7 +268,7 @@ def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> P
 
 路径语义:
 
-- `source_path` 是 CLI 输入的本地视频或音频路径。schema、frontmatter、URL 模板和日志中需要表达原始输入时统一使用这个名字。
+- `source_path` 是本次运行解析后的绝对本地视频或音频输入路径。schema、frontmatter、URL 模板和日志中需要表达输入文件时统一使用这个名字。
 - `run_dir == cache_dir / input_hash`,只存中间产物和 debug copy。
 - `cache_note_md == cache/{input_hash}/note.md`,是 assemble 生成的调试副本或缓存副本,不是最终用户产物。
 - `output_note_md == output_dir / "note.md"`,是最终用户产物。
@@ -591,7 +594,7 @@ class PipelineContext:
 
 字段语义:
 
-- `source_path` 是本次运行的本地视频或音频输入路径,与 `PipelinePaths.source_path` 相同。
+- `source_path` 是本次运行解析后的绝对本地视频或音频输入路径,与 `PipelinePaths.source_path` 相同。
 - `mode` 是 CLI 本次运行模式,只允许 `"audio_only"` 或 `"multimodal"`;配置文件不提供该字段。
 - `artifacts` 的类型必须是 `ArtifactBundle`,不是裸 `AudioArtifacts`、裸 `VisualArtifacts` 或任意 dict。
 - 音频产物一律通过 `ctx.artifacts.audio` 访问。
@@ -754,7 +757,7 @@ refined = read_json(ctx.paths.refined_transcript_json)
 
 | 名称 | 语义 |
 |---|---|
-| `source_path` | 本地视频或音频输入路径 |
+| `source_path` | 解析后的绝对本地视频或音频输入路径 |
 | `cache_dir` | 缓存根目录 |
 | `run_dir` | `cache/{input_hash}` |
 | `output_dir` | 最终用户产物目录 |
@@ -795,7 +798,7 @@ output_dir/
 
 - `output_dir/note.md` 是唯一最终用户产物。
 - `cache/{input_hash}/note.md` 只作为中间产物或 debug copy 存在。
-- `source_path` 统一表示原始输入,不区分视频和音频。配置、schema 和上下文中不要使用带媒体类型假设的字段名。
+- `source_path` 统一表示解析后的绝对本地输入路径,不区分视频和音频。配置、schema 和上下文中不要使用带媒体类型假设的字段名。
 - `image_source_path` 在 visual 与 merge schema 中保存为相对 `cache/{input_hash}/visual/frames/` 的路径。
 - `resolve_visual_image_path()` 负责把相对 `image_source_path` 解析到真实帧文件。
 - `make_markdown_image_path()` 负责把相对 `image_source_path` 转换为最终 Markdown 可用的相对路径。

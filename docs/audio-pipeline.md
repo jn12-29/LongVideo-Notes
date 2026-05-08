@@ -255,7 +255,7 @@ class AudioExtractResult:
     duration: float                 # 秒
     sample_rate: int                # 重采样后的采样率,与 audio_pipeline.extract.sample_rate 一致
     channels: int                   # 重采样后的通道数,与 audio_pipeline.extract.channels 一致
-    source_path: Path               # 输入文件原始路径(可能是视频也可能是音频)
+    source_path: Path               # 解析后的绝对本地输入路径(可能是视频也可能是音频)
     source_codec: str               # 原始编码格式标识
     source_sample_rate: int         # 原始采样率
     source_channels: int            # 原始通道数
@@ -510,13 +510,13 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 ### `AudioArtifacts` 的渐进实现
 
-在第一个 stage(extract)开发时**同步创建** `AudioArtifacts` 类骨架,初版只支持 `get_extract()` 与 `get_duration()`。后续 stage 完成时逐步扩展方法:
+在第一个 stage(extract)开发时**同步创建** `AudioArtifacts` 类骨架,初版只支持已落盘产物对应的轻量访问方法。后续 stage 完成时逐步扩展方法:
 
 | 完成 stage | `AudioArtifacts` 新增方法 |
 |---|---|
-| extract | `get_extract`、`get_duration`、`get_language`(占位返回 config 的语言)、`is_complete`(基于 refined_transcript.json 存在性) |
+| extract | `get_extract`、`get_duration`、`is_complete`(基于 refined_transcript.json 存在性) |
 | transcribe | `get_transcript`、`get_language`(改为从 transcript 读真实值) |
-| segment | `get_segments`、`get_segment_at` |
-| refine | `get_refined`、`get_text_at` |
+| segment | `get_segments` |
+| refine | `get_refined`、`get_text_at`、`get_segment_at` |
 
 这样实现 stage N 时,stage N+1 需要的接口已经定义好(即使返回值未填齐),调度层骨架可以先按完整 API 写。
