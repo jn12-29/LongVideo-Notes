@@ -1,6 +1,6 @@
 # LongVideo-Notes
 
-从长视频 / 音频生成结构化 Markdown 笔记的本地 CLI 工具。项目当前处于**设计文档构建阶段**，实现尚未开始。
+从长视频 / 音频生成结构化 Markdown 笔记的本地 CLI 工具。项目已具备 Python 包结构、CLI、核心缓存/配置/artifact 合同、媒体/ASR/LLM 边界模块，以及音频、合并、多模管线实现。
 
 ## 目标
 
@@ -13,11 +13,12 @@
 - 本地 CLI 工具，不做 Web UI、数据库、任务队列或用户系统
 - 第一版主要验证中文输入，prompt 模板不追求多语种通用性
 
-## 预期形态
+## 使用
 
-最终 CLI 入口计划为：
+安装开发依赖后，可通过模块入口或 console script 运行：
 
 ```bash
+python -m lvnotes --help
 lvnotes run <input-file>
 lvnotes run <input-file> --mm
 lvnotes inspect audio refined <input-file>
@@ -27,7 +28,14 @@ lvnotes assemble <input-file> --no-cache
 
 默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
 
-当前命令尚未实现；以上是 CLI 规格目标，不是当前可执行说明。CLI 命令、参数、模式规则与调度行为以 `docs/cli.md` 为权威。
+CLI 默认查找当前目录下的 `config.yaml`，也可通过 `--config <path>` 指定配置文件。可从 `config.example.yaml` 复制并按本地 LLM / ASR 环境调整。
+
+运行真实管线需要：
+
+- `ffmpeg` / `ffprobe`
+- 有效的 `config.yaml`
+- 对应 LLM profile 的 API key 环境变量，或本地 OpenAI-compatible endpoint
+- 运行 ASR 时安装 `faster-whisper` 可选依赖
 
 ## 文档
 
@@ -44,9 +52,9 @@ lvnotes assemble <input-file> --no-cache
 
 ## 当前状态
 
-- 已完成项目级设计文档
-- 已完成 core / media / llm / asr / cli 模块设计文档
-- 已完成音频管线设计文档
-- 已完成合并阶段设计文档
-- 已完成多模管线设计文档（第一版可仅占位实现）
-- 尚未创建 Python 包结构、配置文件和测试
+- 已创建 `lvnotes/` Python 包结构与 `pyproject.toml`
+- 已实现 `core/` schema、序列化、路径、缓存、配置、context、artifacts、日志与异常
+- 已实现 `media/`、`llm/`、`asr/` 边界模块
+- 已实现 CLI、音频管线、合并阶段和多模管线
+- 已添加 `config.example.yaml`、`.importlinter` 和核心单元测试
+- 真实端到端质量仍依赖本地媒体 fixture、ASR 模型、LLM/VLM 配置与 prompt 调优

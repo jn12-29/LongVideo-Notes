@@ -1,0 +1,8 @@
+Return JSON matching {"chapters":[{"id":1,"title":"...","summary":"...","block_id_start":0,"block_id_end":0}]}.
+Create a concise outline. Target chapter count: {{ target_chapter_count_hint }}.
+Chapter ranges must cover all block ids exactly once.
+
+Blocks:
+{% for block in blocks -%}
+- {{ block.id }}: {{ block.topic }} — {{ block.summary }}
+{% endfor %}

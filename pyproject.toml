@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "longvideo-notes"
+version = "0.1.0"
+description = "Local CLI for turning long video or audio into structured Markdown notes."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.40",
+  "click>=8.1",
+  "jinja2>=3.1",
+  "openai>=1.50",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  "pyyaml>=6.0",
+  "tenacity>=8.3",
+]
+
+[project.optional-dependencies]
+asr = ["faster-whisper>=1.0"]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+lvnotes = "lvnotes.cli.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lvnotes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

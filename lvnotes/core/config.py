@@ -1,0 +1,192 @@
+from pathlib import Path
+import string
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from lvnotes.core.constants import SUPPORTED_LLM_CAPABILITIES, SUPPORTED_LLM_PROVIDERS
+from lvnotes.core.exceptions import ConfigError
+
+LLM_TASK_NAMES = frozenset({"segment", "refine", "outline", "section", "slide_judge", "slide_describe"})
+
+
+class FrozenModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+
+class ProjectConfig(FrozenModel):
+    cache_dir: Path = Path("./cache")
+    output_dir: Path = Path("./output")
+
+
+class LLMProfile(FrozenModel):
+    name: str = ""
+    provider: str
+    base_url: str | None = None
+    api_key_env: str | None = None
+    model: str
+    capabilities: frozenset[str] = Field(default_factory=frozenset)
+    max_context: int | None = None
+    timeout_seconds: float | None = None
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        if value not in SUPPORTED_LLM_PROVIDERS:
+            raise ValueError(f"unsupported LLM provider: {value}")
+        return value
+
+    @field_validator("capabilities", mode="before")
+    @classmethod
+    def validate_capabilities(cls, value: object) -> frozenset[str]:
+        capabilities = frozenset(value or [])
+        unknown = capabilities - SUPPORTED_LLM_CAPABILITIES
+        if unknown:
+            raise ValueError(f"unsupported LLM capabilities: {sorted(unknown)}")
+        return capabilities
+
+
+class LLMConfig(FrozenModel):
+    profiles: dict[str, LLMProfile]
+
+    @model_validator(mode="after")
+    def attach_profile_names(self) -> "LLMConfig":
+        profiles = {name: profile.model_copy(update={"name": name}) for name, profile in self.profiles.items()}
+        object.__setattr__(self, "profiles", profiles)
+        return self
+
+
+class ASRConfig(FrozenModel):
+    backend: str = "faster_whisper_local"
+    model: str = "large-v3"
+    device: str = "auto"
+    compute_type: str = "auto"
+    use_batched: bool = True
+    batch_size: int = 16
+    vad: bool = True
+    language: str = "zh"
+
+
+class AudioExtractConfig(FrozenModel):
+    sample_rate: int = 16000
+    channels: int = 1
+
+    @field_validator("sample_rate")
+    @classmethod
+    def validate_sample_rate(cls, value: int) -> int:
+        if value not in {8000, 16000, 22050, 32000, 44100, 48000}:
+            raise ValueError("unsupported sample_rate")
+        return value
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value: int) -> int:
+        if value not in {1, 2}:
+            raise ValueError("channels must be 1 or 2")
+        return value
+
+
+class AudioSegmentConfig(FrozenModel):
+    target_count_hint: str = "15-40"
+    min_segment_seconds: float = 30
+    max_segment_seconds: float = 480
+
+
+class AudioRefineConfig(FrozenModel):
+    sliding_window_token_threshold: int = 30000
+    sliding_window_recent_segments: int = 5
+
+
+class AudioPipelineConfig(FrozenModel):
+    extract: AudioExtractConfig = Field(default_factory=AudioExtractConfig)
+    segment: AudioSegmentConfig = Field(default_factory=AudioSegmentConfig)
+    refine: AudioRefineConfig = Field(default_factory=AudioRefineConfig)
+
+
+class VisualSampleConfig(FrozenModel):
+    fps: float = 1
+
+
+class VisualClusterConfig(FrozenModel):
+    phash_low_threshold: int = 5
+    phash_high_threshold: int = 15
+
+
+class VisualPipelineConfig(FrozenModel):
+    sample: VisualSampleConfig = Field(default_factory=VisualSampleConfig)
+    cluster: VisualClusterConfig = Field(default_factory=VisualClusterConfig)
+
+
+class MergeOutlineConfig(FrozenModel):
+    target_chapter_count_hint: str = "5-12"
+
+
+class MergeSectionConfig(FrozenModel):
+    concurrent_calls: int = 5
+
+
+class MergeAssembleConfig(FrozenModel):
+    timestamp_format: str = "[{hms}]"
+    include_toc: bool = True
+    include_metadata: bool = True
+    video_url_template: str | None = None
+    top_title: str | None = None
+
+    @model_validator(mode="after")
+    def validate_templates(self) -> "MergeAssembleConfig":
+        _validate_format_fields(self.timestamp_format, {"hms", "mmss", "seconds", "seconds_int"})
+        if self.video_url_template is not None:
+            _validate_format_fields(
+                self.video_url_template,
+                {"seconds", "seconds_int", "source_path", "source_filename", "hms"},
+            )
+        return self
+
+
+class MergeConfig(FrozenModel):
+    outline: MergeOutlineConfig = Field(default_factory=MergeOutlineConfig)
+    section: MergeSectionConfig = Field(default_factory=MergeSectionConfig)
+    assemble: MergeAssembleConfig = Field(default_factory=MergeAssembleConfig)
+
+
+class AppConfig(FrozenModel):
+    project: ProjectConfig = Field(default_factory=ProjectConfig)
+    llm: LLMConfig
+    tasks: dict[str, str]
+    asr: ASRConfig = Field(default_factory=ASRConfig)
+    audio_pipeline: AudioPipelineConfig = Field(default_factory=AudioPipelineConfig)
+    visual_pipeline: VisualPipelineConfig = Field(default_factory=VisualPipelineConfig)
+    merge: MergeConfig = Field(default_factory=MergeConfig)
+
+    @model_validator(mode="after")
+    def validate_tasks(self) -> "AppConfig":
+        unknown = set(self.tasks) - LLM_TASK_NAMES
+        if unknown:
+            raise ValueError(f"unknown LLM task names: {sorted(unknown)}")
+        missing = LLM_TASK_NAMES - set(self.tasks)
+        if missing:
+            raise ValueError(f"missing LLM task mappings: {sorted(missing)}")
+        missing_profiles = {profile for profile in self.tasks.values() if profile not in self.llm.profiles}
+        if missing_profiles:
+            raise ValueError(f"tasks reference unknown profiles: {sorted(missing_profiles)}")
+        return self
+
+
+def load_config(path: Path | None = None) -> AppConfig:
+    config_path = path or Path("config.yaml")
+    if not config_path.exists():
+        raise ConfigError(f"config file not found: {config_path}")
+    try:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        return AppConfig.model_validate(payload)
+    except ConfigError:
+        raise
+    except Exception as exc:
+        raise ConfigError(f"failed to load config {config_path}: {exc}") from exc
+
+
+def _validate_format_fields(template: str, allowed: set[str]) -> None:
+    fields = {field_name for _, field_name, _, _ in string.Formatter().parse(template) if field_name}
+    unknown = fields - allowed
+    if unknown:
+        raise ValueError(f"unsupported template fields: {sorted(unknown)}")

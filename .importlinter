@@ -1,0 +1,39 @@
+[importlinter]
+root_package = lvnotes
+
+[importlinter:contract:core-no-business]
+name = Core must not import business modules
+type = forbidden
+source_modules = lvnotes.core
+forbidden_modules =
+    lvnotes.audio_pipeline
+    lvnotes.visual_pipeline
+    lvnotes.merge
+    lvnotes.cli
+    lvnotes.media
+    lvnotes.asr
+    lvnotes.llm
+
+[importlinter:contract:audio-no-downstream]
+name = Audio pipeline does not import downstream modules
+type = forbidden
+source_modules = lvnotes.audio_pipeline
+forbidden_modules =
+    lvnotes.visual_pipeline
+    lvnotes.merge
+
+[importlinter:contract:visual-no-audio-merge]
+name = Visual pipeline does not import audio or merge modules
+type = forbidden
+source_modules = lvnotes.visual_pipeline
+forbidden_modules =
+    lvnotes.audio_pipeline
+    lvnotes.merge
+
+[importlinter:contract:merge-no-pipelines]
+name = Merge does not import pipeline internals
+type = forbidden
+source_modules = lvnotes.merge
+forbidden_modules =
+    lvnotes.audio_pipeline
+    lvnotes.visual_pipeline

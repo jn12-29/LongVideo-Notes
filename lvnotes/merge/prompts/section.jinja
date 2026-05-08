@@ -1,0 +1,15 @@
+Write one Markdown chapter from the provided blocks.
+Preserve every [[REF:N]] marker exactly. Insert each block timestamp marker [[TS:<start>]] near the block content.
+Use visual image paths when visuals are present.
+
+Outline:
+{{ outline }}
+
+Blocks:
+{% for block in blocks %}
+Block {{ block.id }} [{{ block.start }}-{{ block.end }}] {{ block.topic }}
+Text: {{ block.cleaned_text }}
+{% for visual in block.visuals %}
+Visual: ![{{ visual.description }}]({{ visual.path }})
+{% endfor %}
+{% endfor %}

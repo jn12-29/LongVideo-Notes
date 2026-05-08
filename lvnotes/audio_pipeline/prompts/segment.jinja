@@ -1,0 +1,7 @@
+Return JSON matching this schema: {"markers":[{"id":0,"start":0.0,"end":60.0,"topic_hint":"...","boundary_reason":"..."}]}.
+Split the transcript into semantic segments. Target count: {{ target_count_hint }}.
+Each segment should be between {{ min_segment_seconds }} and {{ max_segment_seconds }} seconds when possible.
+Cover the full duration from 0.000 to {{ duration }} without gaps.
+
+Transcript:
+{{ transcript }}

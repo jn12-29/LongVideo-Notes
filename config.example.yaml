@@ -1,0 +1,70 @@
+project:
+  cache_dir: ./cache
+  output_dir: ./output
+
+llm:
+  profiles:
+    gpt_main:
+      provider: openai_responses
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+      model: gpt-5
+      capabilities: [vision, prompt_cache, json_mode, reasoning]
+      max_context: 1000000
+      timeout_seconds: 120
+    weak_vlm:
+      provider: openai_compatible_chat
+      base_url: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+      model: google/gemini-2.5-flash
+      capabilities: [vision]
+      timeout_seconds: 60
+
+tasks:
+  segment: gpt_main
+  refine: gpt_main
+  outline: gpt_main
+  section: gpt_main
+  slide_judge: weak_vlm
+  slide_describe: gpt_main
+
+asr:
+  backend: faster_whisper_local
+  model: large-v3
+  device: auto
+  compute_type: auto
+  use_batched: true
+  batch_size: 16
+  vad: true
+  language: zh
+
+audio_pipeline:
+  extract:
+    sample_rate: 16000
+    channels: 1
+  segment:
+    target_count_hint: "15-40"
+    min_segment_seconds: 30
+    max_segment_seconds: 480
+  refine:
+    sliding_window_token_threshold: 30000
+    sliding_window_recent_segments: 5
+
+visual_pipeline:
+  sample:
+    fps: 1
+  cluster:
+    phash_low_threshold: 5
+    phash_high_threshold: 15
+
+merge:
+  outline:
+    target_chapter_count_hint: "5-12"
+  section:
+    concurrent_calls: 5
+  assemble:
+    timestamp_format: "[{hms}]"
+    include_toc: true
+    include_metadata: true
+    video_url_template: null
+    top_title: null
