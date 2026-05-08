@@ -6,7 +6,6 @@ from lvnotes.core.schemas.audio import (
     SegmentMarker,
     Transcript,
     TranscriptSegment,
-    WordTimestamp,
 )
 from lvnotes.core.schemas.merge import Chapter, ContentBlock, Outline, VisualSlot
 from lvnotes.core.schemas.visual import (
@@ -42,5 +41,4 @@ __all__ = [
     "VisualSegmentList",
     "VisualSelection",
     "VisualSlot",
-    "WordTimestamp",
 ]

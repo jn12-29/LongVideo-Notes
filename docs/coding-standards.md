@@ -59,7 +59,6 @@ class TranscriptSegment:
     start: float
     end: float
     text: str
-    words: list[WordTimestamp]
 
 def transcribe(...) -> list[TranscriptSegment]: ...
 
@@ -649,7 +648,7 @@ def transcribe(audio_path: Path) -> Transcript:
       在 GPU 上有 3-5x 加速;CPU 上无收益所以代码里有分支判断。
     - condition_on_previous_text=False,避免长音频中幻觉传播。
     - VAD 必开。faster-whisper 在静音段会大量幻觉。
-    - initial_prompt 引导加标点,否则中文转录普遍缺标点。
+    - 不传 initial_prompt,避免 prompt 文案被幻觉进正文。
     """
 ```
 

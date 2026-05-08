@@ -13,7 +13,7 @@
 | Stage | 名称 | 主要工具 | 主要产物 |
 |---|---|---|---|
 | 1 | extract | ffmpeg (经 `media/`) | `audio.wav` (16kHz mono) + 元信息 |
-| 2 | transcribe | faster-whisper (经 `asr/`) | `transcript_raw.json`(带 word-level 时间戳) |
+| 2 | transcribe | faster-whisper (经 `asr/`) | `transcript_raw.json`(段级时间戳 + 转录文本) |
 | 3 | segment | LLM (经 `llm/`) | `segments.json`(语义切分点) |
 | 4 | refine | LLM (经 `llm/`) | `refined/{seg_id}.json` × N,最终汇为 `refined_transcript.json` |
 
@@ -114,7 +114,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 
 ### 3.2 Stage 2: transcribe
 
-**职责**:把 `audio.wav` 转成带 word-level 时间戳的 `Transcript`。
+**职责**:把 `audio.wav` 转成带段级时间戳和文本的 `Transcript`。
 
 **Input**:`ctx.artifacts.audio.get_extract()` 拿 `AudioExtractResult`。
 
@@ -126,7 +126,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - `BatchedInferencePipeline` **仅在 GPU 上有 3-5x 收益**,CPU 上无收益甚至更慢;`asr/faster_whisper_local.py` 内根据 `device` 自动选择是否启用 batched
 - `condition_on_previous_text=False` 必须显式关闭,长音频中一次幻觉会通过该参数传染后续段落(faster-whisper 已知问题)
 - VAD **默认开**。faster-whisper 在静音段(非语音区间)会大量幻觉,VAD 是硬刚需而非可选优化
-- `initial_prompt` 引导加标点。中文转录普遍缺标点,给一段示例文本(带正确标点)作为 initial_prompt 显著改善
+- 不传 `initial_prompt`,避免 prompt 文案被模型幻觉进转录正文
 - 输出归一化为 `Transcript` dataclass。`asr/` 不暴露 faster-whisper 原生类型给上层
 
 **配置项**(来自 `asr.*`,见 `docs/overview.md` §8):
@@ -139,7 +139,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - `asr.vad`: bool,默认 true
 - `asr.language`: ISO 639-1 字符串
 
-**缓存键**:调用 `build_cache_key("transcribe", {"audio": hash_file(ctx.paths.audio_wav), "config": hash_json(ctx.config.asr), "backend_version": hash_json(asr_backend_version_payload)})`。
+**缓存键**:调用 `build_cache_key("transcribe", {"audio": hash_file(ctx.paths.audio_wav), "config": hash_json(ctx.config.asr), "backend_version": hash_json(asr_backend_version_payload)})`。`asr_backend_version_payload` 必须包含 ASR backend 名称和转录行为版本;改变输出 schema、是否请求 word-level 识别、是否传 `initial_prompt` 等会影响转录文本或 JSON 形态的行为时,必须 bump 行为版本以让旧缓存失效。
 
 **错误处理**:
 - 模型加载失败:`asr/` 包装为 `ASRError`
@@ -261,19 +261,11 @@ class AudioExtractResult:
     source_channels: int            # 原始通道数
 
 @dataclass(frozen=True)
-class WordTimestamp:
-    word: str
-    start: float
-    end: float
-    probability: float              # whisper 给出的置信度,0-1
-
-@dataclass(frozen=True)
 class TranscriptSegment:
     id: int                         # 0-based 严格递增
     start: float
     end: float
     text: str
-    words: list[WordTimestamp]      # 可能为空(某些后端不输出 word-level)
 
 @dataclass(frozen=True)
 class Transcript:
@@ -405,7 +397,7 @@ class AudioArtifacts:
 下游可依赖的**稳定契约**:
 - `RefinedTranscript` 及其字段
 - `SegmentList` 及其字段
-- `Transcript`(含 word-level 时间戳)
+- `Transcript`(段级时间戳 + 转录文本)
 - 元信息:`duration`、`language`
 - 时间戳精度毫秒
 - `AudioArtifacts` 的方法签名与语义

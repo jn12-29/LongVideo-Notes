@@ -25,7 +25,7 @@ class Transcriber:
 | `faster_whisper_local.py` | 本地 faster-whisper 实现 |
 | `factory.py` | 根据配置创建 transcriber |
 
-`Transcript`、`TranscriptSegment`、`WordTimestamp` 定义在 `core/schemas/audio.py`,由 `core.schemas` re-export。`asr/` 不定义自己的跨模块 transcript schema。
+`Transcript`、`TranscriptSegment` 定义在 `core/schemas/audio.py`,由 `core.schemas` re-export。`asr/` 不定义自己的跨模块 transcript schema。
 
 ---
 
@@ -55,7 +55,7 @@ class Transcriber:
 
 ### 2.3 输出必须归一化为 `Transcript`
 
-`faster-whisper` 的 segment / word 类型不能传出 `asr/`。所有后端必须返回 `core.schemas.Transcript`。
+`faster-whisper` 的 segment 类型不能传出 `asr/`。所有后端必须返回 `core.schemas.Transcript`。
 
 理由:
 
@@ -201,19 +201,18 @@ class FasterWhisperLocalTranscriber:
 segments, info = model.transcribe(
     str(audio_path),
     language=config.language,
-    word_timestamps=True,
+    word_timestamps=False,
     vad_filter=config.vad,
     condition_on_previous_text=False,
-    initial_prompt=_initial_prompt_for_language(config.language),
 )
 ```
 
 参数约束:
 
-- `word_timestamps=True`:下游调试和时间对齐需要 word-level 时间戳
+- `word_timestamps=False`:下游只需要段级时间戳和文本,不做 word-level 识别
 - `vad_filter=config.vad`:默认 true,但可配置
 - `condition_on_previous_text=False`:必须显式关闭
-- `initial_prompt`:用于中文标点引导
+- 不传 `initial_prompt`:避免 prompt 文案被模型幻觉进转录正文
 - 不启用 speaker diarization,项目第一版明确非目标
 
 ### 4.5 batched 推理
@@ -242,10 +241,8 @@ use_batched = config.use_batched and resolved_device == "cuda"
 2. 所有 `start < end`
 3. 时间戳是 `float` 秒数,保留毫秒精度
 4. `text` 只做 strip,不重写内容
-5. `words` 按时间排序
-6. word 缺少 probability 时按后端能力处理;完全不支持时后续 API 后端可返回空列表
-7. `language` 优先来自 faster-whisper info,否则用配置值
-8. `duration` 来自 faster-whisper info;若不可用,由 transcribe stage 用 `AudioExtractResult.duration` 做一致性校验
+5. `language` 优先来自 faster-whisper info,否则用配置值
+6. `duration` 来自 faster-whisper info;若不可用,由 transcribe stage 用 `AudioExtractResult.duration` 做一致性校验
 
 `asr/` 不做:
 
@@ -266,27 +263,7 @@ raise ASRError("no speech detected")
 
 ---
 
-## 6. Initial Prompt
-
-中文输入普遍缺标点。`faster_whisper_local` 可按语言提供短 initial prompt。
-
-```python
-def _initial_prompt_for_language(language: str) -> str | None:
-    if language == "zh":
-        return "以下是中文课程讲解转录，请使用自然的中文标点。"
-    return None
-```
-
-要求:
-
-- prompt 内容短,避免污染转录
-- 只用于标点和风格引导
-- 第一版主要服务中文输入
-- prompt 文案如需配置化,后续再讨论
-
----
-
-## 7. Error Handling
+## 6. Error Handling
 
 所有 ASR 可预期错误统一包装为 `ASRError`。
 
@@ -350,7 +327,7 @@ Import 规则:
 项目内:
 
 - `core/config.py`: `ASRConfig`
-- `core/schemas`: `Transcript`、`TranscriptSegment`、`WordTimestamp`
+- `core/schemas`: `Transcript`、`TranscriptSegment`
 - `core/exceptions.py`: `ASRError`
 - `core/timestamps.py`: 如需毫秒精度处理
 
@@ -385,7 +362,7 @@ Import 规则:
 1. `create_transcriber()` 能根据 `backend="faster_whisper_local"` 返回实现
 2. 不支持 backend 抛 `ASRError`
 3. 真实 wav 输入能返回非空 `Transcript`
-4. 输出 segment / word 时间戳满足不变量
+4. 输出 segment 时间戳满足不变量
 5. `condition_on_previous_text=False` 显式存在
 6. `vad` 默认 true 且配置可关闭
 7. CPU 下即使 `use_batched=true` 也不启用 batched
