@@ -14,12 +14,12 @@
 |---|---|---|
 | unify | 纯逻辑 | `content_blocks.json`（`ContentBlock` 序列） |
 | outline | LLM (经 `llm/`) | `outline.json`（章节结构） |
-| section | LLM (经 `llm/`)，并发 | `sections/{chapter_id:03d}.md` × N |
-| assemble | 纯逻辑 | `note.md`（最终输出） |
+| section | LLM (经 `llm/`)，并发 | `sections/{chapter_id:03d}.md` × N（`chapter_id` 从 1 开始） |
+| assemble | 纯逻辑 | `output_dir/note.md`（最终用户产物） |
 
-**对外产物**：`note.md`（用户最终读的笔记）以及调试用的中间产物（`outline.json` / `sections/*.md` / `content_blocks.json`）。合并阶段是管线终点，没有 downstream 模块，但产物形态构成**用户接口契约**，详见 §5。
+**对外产物**：`output_dir/note.md`（用户最终读的笔记）以及调试用的中间产物（`outline.json` / `sections/*.md` / `content_blocks.json`）。合并阶段是管线终点，没有 downstream 模块，但产物形态构成**用户接口契约**，详见 §5。
 
-**本阶段不知道两条管线的内部实现**——只通过 `core/artifacts.py` 的 `AudioArtifacts` / `VisualArtifacts` 接口读取产物，禁止 `from audio_pipeline import ...` 或 `from visual_pipeline import ...`。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2 的强制结论。
+**本阶段不知道两条管线的内部实现**——只通过 `ctx.artifacts.audio` / `ctx.artifacts.visual` 读取 `AudioArtifacts` / `VisualArtifacts`，禁止 `from audio_pipeline import ...` 或 `from visual_pipeline import ...`。`ctx.artifacts` 本身是 `ArtifactBundle`。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2 的强制结论。
 
 纯音频模式下 `VisualArtifacts is None`，唯一感知模式差异的是 `unify`，其余 stage 对模式无感。
 
@@ -54,7 +54,7 @@ assemble 阶段做纯逻辑替换：
 
 ### 2.5 section 并发 + per-chapter cache + 断点续跑
 
-每章独立 LLM 调用，并发数由 `merge.section.concurrent_calls` 控制。**缓存粒度是 per-chapter**（不是 stage 级）：改某章 prompt 或上游 ContentBlock，只该章失效。已存在 `sections/{i:03d}.md` 跳过。
+每章独立 LLM 调用，并发数由 `merge.section.concurrent_calls` 控制。**缓存粒度是 per-chapter**（不是 stage 级）：改某章 prompt 或上游 ContentBlock，只该章失效。已存在 `sections/{chapter_id:03d}.md` 跳过，`chapter_id` 从 1 开始，例如第一章为 `sections/001.md`。
 
 这与 `audio-pipeline.md` §3.4 refine 的 stage 级缓存不同：refine 段间有强依赖（前段产物作为后段 prompt 一部分），所以以 stage 为缓存单元；section 章节之间相对独立（仅共享 outline 全局摘要作为 context），适合 per-chapter 缓存。
 
@@ -99,7 +99,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 3. 否则在该 audio 段对应的 ContentBlock 上创建一个 `VisualSlot`：
    - `slot.start = max(audio.start, visual.start)`
    - `slot.end = min(audio.end, visual.end)`
-   - `slot.frame_path` / `slot.description` / `slot.medium` / `slot.visual_segment_id` 从 visual 产物复制
+   - `slot.image_source_path` / `slot.description` / `slot.medium` / `slot.visual_segment_id` 从 visual 产物复制
 
 跨越多个 audio 段的 visual 段会在每个被跨越的 ContentBlock 内各挂一个 VisualSlot（指向同一张 frame 和同一段 description，但时间区间各自 clip）。一个 audio 段内的多个 visual segment 全部挂上，按时间排序。
 
@@ -124,19 +124,20 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 **实现要点**：
 - **单次 LLM 调用，不分块**。即使章节数 100+，summary 总量也远小于全文转录
 - **短输出原则**：LLM 输出 JSON 数组，每元素含 `id / title / summary / block_id_start / block_id_end`；不复述章节正文
-- 用 `prompts/outline.jinja` 模板渲染。模板内容：任务说明 + 目标章节数 hint + 所有 ContentBlock 的 `(id, topic, summary)` 列表（按 id 序）
-- LLM JSON 解析 + 1 次修复重试 + schema 校验走 `llm.complete_json()` helper（同 segment / refine）
+- 用包内模板 `lvnotes/merge/prompts/outline.jinja` 渲染。模板内容：任务说明 + 目标章节数 hint + 所有 ContentBlock 的 `(id, topic, summary)` 列表（按 id 序）
+- 通过 `client = for_task(ctx.config, "outline")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper（同 segment / refine）
 - 输出 JSON 的解析与校验：
   1. 解析失败 → 重试 1 次；仍失败抛 `LLMError`
-  2. 校验范围递增不重叠：`chapters[i].block_id_end + 1 == chapters[i+1].block_id_start`
-  3. 校验覆盖完整：`chapters[0].block_id_start == 0`、`chapters[-1].block_id_end == len(blocks) - 1`
-  4. 校验单章范围合法：`block_id_start <= block_id_end` 且都在 `[0, len(blocks)-1]`
-  5. 任一校验失败抛 `LLMError`，触发上层重试
+  2. 校验章节 id 从 1 开始严格递增：`chapters[i].id == i + 1`
+  3. 校验范围递增不重叠：`chapters[i].block_id_end + 1 == chapters[i+1].block_id_start`
+  4. 校验覆盖完整：`chapters[0].block_id_start == 0`、`chapters[-1].block_id_end == len(blocks) - 1`
+  5. 校验单章范围合法：`block_id_start <= block_id_end` 且都在 `[0, len(blocks)-1]`
+  6. 任一校验失败抛 `LLMError`，触发上层重试
 
 **配置项**（`merge.outline.*`）：
 - `target_chapter_count_hint: str` —— 例如 `"5-12"`，作为 prompt 中的目标章节数提示，非硬约束
 
-**缓存键**：`hash(content_blocks.json) + hash(outline 配置) + hash(LLM profile) + hash_prompt_template("prompts/outline.jinja") + "outline"`。模板 hash 经 `core/cache.py` 的 `hash_prompt_template()` 归一化后再计算，避免注释 / 缩进微调触发重跑。
+**缓存键**：`hash(content_blocks.json) + hash(outline 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/merge/prompts/outline.jinja") + "outline"`。模板 hash 经 `core/cache.py` 的 `hash_prompt_template()` 归一化后再计算，避免注释 / 缩进微调触发重跑。
 
 **错误处理**：
 - LLM JSON 解析失败：1 次重试后上抛 `LLMError`
@@ -149,7 +150,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`Outline` + `list[ContentBlock]`。
 
-**Output**：每章一个 markdown 文件，落盘 `cache/{input_hash}/sections/{chapter_id:03d}.md`。
+**Output**：每章一个 markdown 文件，落盘 `cache/{input_hash}/sections/{chapter_id:03d}.md`。`chapter_id` 从 1 开始，第一章为 `cache/{input_hash}/sections/001.md`。
 
 **实现要点**：
 
@@ -157,6 +158,8 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 1. 任务说明 + 风格指引（写作语气、详略要求）
 2. 全 outline 章节摘要（所有章的 `id / title / summary`）—— 让 LLM 理解本章在全文中的位置
 3. 本章涉及的 ContentBlock 列表（按 id 序），每个 block 含 `id / start / end / topic / cleaned_text / visuals`
+
+通过 `client = for_task(ctx.config, "section")` 获取 LLM client。每章文本输出走 `complete_text(client, messages, options)`。
 
 *并发*：可用 `asyncio.Semaphore(concurrent_calls)` 或等价机制控制并发上限。每章一个任务,但不改变 stage 对外的同步 `run(ctx) -> StageOutput` 签名。
 
@@ -174,12 +177,12 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 具体相对路径由 `core/paths.py` 提供（不在 section 阶段拼路径）。纯音频模式下 `visuals=[]`,不会插入图片。图片 markdown 中**不要**嵌入时间戳；时间戳由独立的 `[[TS:...]]` marker 表达。
 
-*per-chapter 缓存与断点续跑*：每章 LLM 调用前先查该章 cache，命中则跳过。每完成一章就落盘 `sections/{chapter_id:03d}.md`。某章失败时其他章已完成的不丢，整个 stage 重跑时跳过已存在的章。
+*per-chapter 缓存与断点续跑*：每章 LLM 调用前先查该章 cache，命中则跳过。每完成一章就落盘 `sections/{chapter_id:03d}.md`，`chapter_id` 从 1 开始。某章失败时其他章已完成的不丢，整个 stage 重跑时跳过已存在的章。
 
 **配置项**（`merge.section.*`）：
 - `concurrent_calls: int` —— 默认 5
 
-**缓存键**（per-chapter）：单章 cache 键 = `hash(本章 ContentBlocks) + hash(Outline) + hash(section 配置) + hash(LLM profile) + hash_prompt_template("prompts/section.jinja") + "section_chapter_{id}"`。模板 hash 走 `core/cache.py` 的 `hash_prompt_template()`（归一化后再 hash），避免注释 / 缩进微调触发全部章重跑。
+**缓存键**（per-chapter）：单章 cache 键 = `hash(本章 ContentBlocks) + hash(Outline) + hash(section 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/merge/prompts/section.jinja") + "section_chapter_{chapter_id}"`。模板 hash 走 `core/cache.py` 的 `hash_prompt_template()`（归一化后再 hash），避免注释 / 缩进微调触发全部章重跑。
 
 注意：因为 prompt 含全 outline 摘要，所以 outline 变了所有章 cache 都失效。这是符合期望的——章节摘要变了每章正文都需要重写以保持上下文一致。
 
@@ -192,9 +195,9 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **职责**：把所有 sections 拼成最终 `note.md`，处理 cross_refs 链接化与时间戳跳转链接。**纯逻辑，不调 LLM**。
 
-**Input**：`Outline` + `list[ContentBlock]` + `sections/{i:03d}.md` × N。
+**Input**：`Outline` + `list[ContentBlock]` + `sections/{chapter_id:03d}.md` × N，`chapter_id` 从 1 开始。
 
-**Output**：`cache/{input_hash}/note.md`，并复制或写入 `project.output_dir` 下的 `note.md` 作为**最终用户产物**。
+**Output**：`output_dir/note.md` 作为**最终用户产物**。可同时保存 `cache/{input_hash}/note.md` 作为 debug/cache copy，便于调试、inspect 与断点续跑。
 
 **实现要点**：
 
@@ -230,17 +233,17 @@ Template 支持的占位符：
 |---|---|
 | `{seconds}` | 浮点秒数（含毫秒，3 位小数） |
 | `{seconds_int}` | 整数秒（向下取整） |
-| `{video_path}` | 输入文件绝对路径 |
-| `{video_filename}` | 输入文件名（不含路径） |
+| `{source_path}` | 输入文件绝对路径，可能是音频或视频 |
+| `{source_filename}` | 输入文件名（不含路径） |
 | `{hms}` | hh:mm:ss 格式 |
 
 常见配置示例：
 
 | 场景 | template | 生成结果 |
 |---|---|---|
-| 本地 file URL | `"file://{video_path}?t={seconds_int}"` | `file:///home/u/lec.mp4?t=120` |
-| 笔记与视频同目录 | `"{video_filename}?t={seconds_int}"` | `lec.mp4?t=120` |
-| 自有视频服务器 | `"https://my-host/v/{video_filename}?t={seconds}"` | `https://my-host/v/lec.mp4?t=120.500` |
+| 本地 file URL | `"file://{source_path}?t={seconds_int}"` | `file:///home/u/lec.mp4?t=120` |
+| 笔记与输入文件同目录 | `"{source_filename}?t={seconds_int}"` | `lec.mp4?t=120` |
+| 自有媒体服务器 | `"https://my-host/v/{source_filename}?t={seconds}"` | `https://my-host/v/lec.mp4?t=120.500` |
 
 理由：本地路径、内网服务、外网 URL 三种场景需求差异大；不强制 file:// 默认值（避免在不同主机上路径失效），不做约定优于配置（避免要求笔记与视频共目录）。未配置就保留纯文本，是最安全的默认。
 
@@ -248,7 +251,7 @@ Template 支持的占位符：
 
 ```markdown
 ---
-source: <视频原始路径>
+source_path: <输入文件原始路径>
 duration: <hh:mm:ss>
 generated_at: <UTC ISO-8601>
 mode: audio_only | multimodal
@@ -260,10 +263,10 @@ llm_profile: <profile name>
 <可选目录>
 
 ## <chapter 1 标题>
-<sections/000.md 内容>
+<sections/001.md 内容>
 
 ## <chapter 2 标题>
-<sections/001.md 内容>
+<sections/002.md 内容>
 
 ...
 ```
@@ -302,7 +305,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class VisualSlot:
-    frame_path: Path                # 代表帧文件路径，相对 cache/{input_hash}/visual/frames/
+    image_source_path: Path         # 代表帧文件路径，相对 cache/{input_hash}/visual/frames/
     description: str                # 强 VLM 输出的图文联合描述
     medium: str                     # judge 阶段输出，"ppt" / "blackboard" / "code" / "demo" / "other"
     start: float                    # clip 到所属 ContentBlock 区间内的起点
@@ -331,7 +334,7 @@ class ContentBlock:
 
 @dataclass(frozen=True)
 class Chapter:
-    id: int                         # 0-based 严格递增
+    id: int                         # 1-based 严格递增,用于 sections/{chapter_id:03d}.md
     title: str                      # LLM 生成
     summary: str                    # LLM 生成，1-2 句话
     block_id_start: int             # 闭区间起点
@@ -351,7 +354,7 @@ class Outline:
 
 1. `ContentBlock.id` 与 `RefinedSegment.id` 一一对应、同值
 2. `ContentBlock` 列表按 `id` 严格递增，覆盖 `[0, len-1]`
-3. `Chapter` 列表 `block_id_start ≤ block_id_end`；相邻 chapter 间 `chapters[i].block_id_end + 1 == chapters[i+1].block_id_start`
+3. `Chapter.id` 从 1 开始严格递增；`block_id_start ≤ block_id_end`；相邻 chapter 间 `chapters[i].block_id_end + 1 == chapters[i+1].block_id_start`
 4. 第一个 chapter `block_id_start == 0`，最后一个 `block_id_end == len(blocks) - 1`（覆盖所有 block）
 5. `cross_refs[i] < self.id` 且对应到存在的 `ContentBlock.id`
 6. `VisualSlot.start ≥ ContentBlock.start` 且 `VisualSlot.end ≤ ContentBlock.end`（clip 已应用）
@@ -367,8 +370,8 @@ class Outline:
 
 ### 稳定的产物
 
-- `cache/{input_hash}/note.md` —— Markdown 笔记缓存副本（UTF-8），便于调试与断点续跑
-- `project.output_dir/note.md` —— 最终用户产物
+- `cache/{input_hash}/note.md` —— Markdown 笔记 debug/cache copy（UTF-8），便于调试与断点续跑
+- `output_dir/note.md` —— 最终用户产物
 - `cache/{input_hash}/outline.json` —— `Outline` 序列化，便于工具按章节切分笔记或重新生成单章
 - `cache/{input_hash}/sections/{chapter_id:03d}.md` —— 各章独立 markdown，便于用户单独编辑后重新 assemble
 - `cache/{input_hash}/content_blocks.json` —— `list[ContentBlock]` 序列化，调试用
@@ -379,7 +382,7 @@ CLI 提供 `lvnotes inspect <namespace> <stage> <input-file>` 查看任意中间
 
 ### 用户编辑流程支持
 
-用户编辑某章 `sections/{i}.md` 后想重新合成笔记：
+用户编辑某章 `sections/{chapter_id:03d}.md`（如 `sections/001.md`）后想重新合成笔记：
 
 ```bash
 lvnotes assemble <input-file> --no-cache  # 跳过 assemble 缓存，重读 sections，重新生成 note.md

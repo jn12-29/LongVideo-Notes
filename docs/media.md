@@ -154,7 +154,7 @@ def extract_wav(
 
 ```python
 audio_path = extract_wav(
-    input_path=ctx.input_path,
+    input_path=ctx.source_path,
     output_path=ctx.paths.audio_wav,
     sample_rate=ctx.config.audio_pipeline.extract.sample_rate,
     channels=ctx.config.audio_pipeline.extract.channels,

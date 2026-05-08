@@ -461,7 +461,7 @@ def test_baz():
 **不允许**未经文档明确要求添加:
 
 - 新的抽象基类
-- 工厂模式(除文档已声明的 `LLMClientFactory` 等)
+- 工厂模式(除文档已声明的 `get_client()` / `for_task()` 等)
 - 注册机制(`@register("xxx")` 装饰器之类)
 - 插件系统
 - 中间件 / 拦截器

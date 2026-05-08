@@ -27,20 +27,20 @@ lvnotes assemble <input-file> --no-cache
 
 默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
 
-当前命令尚未实现，具体行为以 `docs/overview.md` 和各管线文档为准。
+当前命令尚未实现；以上是 CLI 规格目标，不是当前可执行说明。CLI 命令、参数、模式规则与调度行为以 `docs/cli.md` 为权威。
 
 ## 文档
 
-- `docs/overview.md` —— 项目级设计、模块边界、配置示例、实现优先级
-- `docs/coding-standards.md` —— 开发规范与 agent 写代码约束
-- `docs/core.md` —— core 框架层设计：schema、artifacts、paths、cache、config、context
-- `docs/media.md` —— ffmpeg / ffprobe 唯一入口设计
-- `docs/llm.md` —— LLM provider 抽象、profile、JSON helper、错误归一化
-- `docs/asr.md` —— ASR 抽象与 faster-whisper 本地实现设计
-- `docs/audio-pipeline.md` —— 音频管线详细设计
-- `docs/visual-pipeline.md` —— 多模管线详细设计（第一版可仅占位实现）
-- `docs/merge.md` —— 合并阶段与最终 Markdown 生成设计
-- `docs/cli.md` —— CLI 命令、模式规则、调度与缓存控制设计
+- `docs/overview.md` —— 项目级入口：目标、流程、模块边界、配置示例、实现优先级
+- `docs/cli.md` —— CLI 权威：命令、参数、模式规则、调度与缓存控制
+- `docs/llm.md` —— LLM 权威：provider 抽象、profile、JSON helper、错误归一化
+- `docs/core.md` —— 架构/实现约束权威之一：schema、artifacts、paths、cache、config、context
+- `docs/coding-standards.md` —— 架构/实现约束权威之一：开发规范、模块边界、agent 写代码约束
+- `docs/media.md` —— media 模块权威：ffmpeg / ffprobe 唯一入口
+- `docs/asr.md` —— ASR 模块权威：ASR 抽象与 faster-whisper 本地实现
+- `docs/audio-pipeline.md` —— 音频管线权威：extract / transcribe / segment / refine
+- `docs/visual-pipeline.md` —— 多模管线权威：sample / cluster / judge / select / describe
+- `docs/merge.md` —— 合并阶段权威：unify / outline / section / assemble 与最终 Markdown 生成
 
 ## 当前状态
 

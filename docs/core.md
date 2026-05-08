@@ -2,7 +2,18 @@
 
 `core/` 模块设计文档。本模块是 LongVideo-Notes 的框架层,提供跨模块共享的 schema、路径、缓存、配置、上下文、异常和产物访问接口。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`。
 
-文档结构:Overview、Design Considerations、Module Details、Stage Contract、Artifacts Contract、Config Contract、Module Layout、Dependencies、Implementation Order。
+## 目录
+
+- [1. Overview](#1-overview)
+- [2. Design Considerations](#2-design-considerations)
+- [3. Module Details](#3-module-details)
+- [4. Stage Contract](#4-stage-contract)
+- [5. Artifacts Contract](#5-artifacts-contract)
+- [6. Path Contract](#6-path-contract)
+- [7. Config Contract](#7-config-contract)
+- [8. Module Layout](#8-module-layout)
+- [9. Dependencies](#9-dependencies)
+- [10. Implementation Order](#10-implementation-order)
 
 ---
 
@@ -19,7 +30,7 @@
 | `slugs.py` | Markdown anchor / slug 生成唯一入口 |
 | `pipeline.py` | stage 统一契约与 `StageOutput` |
 | `cache.py` | 内容 hash、原子写入、prompt 模板 hash |
-| `config.py` | 配置 schema、加载、校验、`TaskName` 封闭枚举 |
+| `config.py` | 配置 schema、加载、校验、封闭任务名集合 |
 | `context.py` | `PipelineContext` 运行上下文 |
 | `exceptions.py` | 项目异常层次 |
 | `constants.py` | 真正跨模块的常量 |
@@ -208,33 +219,53 @@ class VisualArtifacts:
 
 ### 3.3 `paths.py`
 
-`paths.py` 是缓存路径唯一来源。建议提供不可变路径对象:
+`paths.py` 是缓存路径和最终输出路径的唯一来源。建议提供不可变路径对象:
 
 ```python
 @dataclass(frozen=True)
 class PipelinePaths:
+    source_path: Path
+    cache_dir: Path
+    output_dir: Path
     run_dir: Path
     audio_dir: Path
     visual_dir: Path
+    visual_frames_dir: Path
     refined_dir: Path
     sections_dir: Path
     audio_wav: Path
     audio_extract_json: Path
+    visual_sample_json: Path
+    visual_segments_json: Path
+    visual_judgements_json: Path
+    visual_selections_json: Path
+    visual_descriptions_json: Path
     transcript_raw_json: Path
     segments_json: Path
     refined_transcript_json: Path
     content_blocks_json: Path
     outline_json: Path
-    note_md: Path
+    cache_note_md: Path
+    output_note_md: Path
 ```
 
 建议工厂函数:
 
 ```python
-def build_paths(cache_dir: Path, input_hash: str) -> PipelinePaths: ...
+def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str) -> PipelinePaths: ...
 ```
 
 `paths.py` 只计算路径,不创建目录、不读写文件。
+
+路径语义:
+
+- `source_path` 是 CLI 输入的本地视频或音频路径。schema、frontmatter、URL 模板和日志中需要表达原始输入时统一使用这个名字。
+- `run_dir == cache_dir / input_hash`,只存中间产物和 debug copy。
+- `cache_note_md == cache/{input_hash}/note.md`,是 assemble 生成的调试副本或缓存副本,不是最终用户产物。
+- `output_note_md == output_dir / "note.md"`,是最终用户产物。
+- visual 帧文件存放在 `visual_frames_dir == cache/{input_hash}/visual/frames/`。
+- visual schema 中的 `source_path` 推荐保存为相对 `visual_frames_dir` 的路径,例如 `000123.000.png` 或子目录下的 `segment-001/000123.000.png`。需要读文件时由 `paths.py` 提供的 resolver 与 `visual_frames_dir` 拼成绝对路径。
+- Markdown 图片引用需要相对于最终 `output_note_md` 计算展示路径;业务 stage 不手写相对路径。
 
 ### 3.4 `timestamps.py`
 
@@ -343,19 +374,20 @@ JSON 写入要求:
 
 `config.py` 使用 pydantic 定义完整配置 schema,启动时一次性加载并校验。
 
-`TaskName` 是封闭枚举:
+LLM 任务名是封闭字符串集合:
 
 ```python
-class TaskName(StrEnum):
-    SEGMENT = "segment"
-    REFINE = "refine"
-    OUTLINE = "outline"
-    SECTION = "section"
-    SLIDE_JUDGE = "slide_judge"
-    SLIDE_DESCRIBE = "slide_describe"
+LLM_TASK_NAMES = {
+    "segment",
+    "refine",
+    "outline",
+    "section",
+    "slide_judge",
+    "slide_describe",
+}
 ```
 
-配置中的 `tasks.*` key 必须属于 `TaskName`,value 必须指向存在的 LLM profile。未知 task 直接抛 `ConfigError`。
+配置中的 `tasks.*` key 必须属于 `LLM_TASK_NAMES`,value 必须指向存在的 LLM profile。未知 task 直接抛 `ConfigError`。
 
 配置不包含一次性运行状态或模式启停字段。多模模式由 CLI `--mm` 决定;refine 调试由 CLI `--debug` 决定。
 
@@ -373,7 +405,7 @@ class ArtifactBundle:
 
 @dataclass(frozen=True)
 class PipelineContext:
-    input_path: Path
+    source_path: Path
     input_hash: str
     config: AppConfig
     paths: PipelinePaths
@@ -381,6 +413,14 @@ class PipelineContext:
     debug: bool = False
     no_cache: bool = False
 ```
+
+字段语义:
+
+- `source_path` 是本次运行的本地视频或音频输入路径,与 `PipelinePaths.source_path` 相同。
+- `artifacts` 的类型必须是 `ArtifactBundle`,不是裸 `AudioArtifacts`、裸 `VisualArtifacts` 或任意 dict。
+- 音频产物一律通过 `ctx.artifacts.audio` 访问。
+- 视觉产物一律通过 `ctx.artifacts.visual` 访问;纯音频模式下该字段为 `None`。
+- 合并阶段读取 `ctx.artifacts.audio` 和可选的 `ctx.artifacts.visual`,不直接读取上游管线内部模块。
 
 `debug` 来自 CLI `--debug`,不是配置字段。
 
@@ -501,7 +541,60 @@ refined = read_json(ctx.paths.refined_transcript_json)
 
 ---
 
-## 6. Config Contract
+## 6. Path Contract
+
+路径命名和归属是稳定规格:
+
+| 名称 | 语义 |
+|---|---|
+| `source_path` | 本地视频或音频输入路径 |
+| `cache_dir` | 缓存根目录 |
+| `run_dir` | `cache/{input_hash}` |
+| `output_dir` | 最终用户产物目录 |
+| `cache_note_md` | `cache/{input_hash}/note.md`,调试或缓存副本 |
+| `output_note_md` | `output_dir/note.md`,最终用户产物 |
+| `visual_frames_dir` | `cache/{input_hash}/visual/frames/` |
+
+目录布局:
+
+```text
+cache/{input_hash}/
+├── audio/
+│   ├── audio.wav
+│   └── extract.json
+├── visual/
+│   ├── frames/
+│   ├── sample.json
+│   ├── segments.json
+│   ├── judgements.json
+│   ├── selections.json
+│   └── descriptions.json
+├── transcript_raw.json
+├── segments.json
+├── refined/
+│   └── {seg_id}.json
+├── refined_transcript.json
+├── content_blocks.json
+├── outline.json
+├── sections/
+│   └── {chapter_id:03d}.md
+└── note.md
+
+output_dir/
+└── note.md
+```
+
+规则:
+
+- `output_dir/note.md` 是唯一最终用户产物。
+- `cache/{input_hash}/note.md` 只作为中间产物或 debug copy 存在。
+- `source_path` 统一表示原始输入,不区分视频和音频。配置、schema 和上下文中不要使用带媒体类型假设的字段名。
+- `image_source_path` 在 visual 与 merge schema 中推荐保存为相对 `cache/{input_hash}/visual/frames/` 的路径。
+- `paths.py` 负责把视觉产物中的相对 `image_source_path` 解析到真实帧文件,以及把帧文件转换为最终 Markdown 可用的相对路径。
+
+---
+
+## 7. Config Contract
 
 配置文件只表达稳定生成语义:
 
@@ -527,7 +620,7 @@ refined = read_json(ctx.paths.refined_transcript_json)
 
 ---
 
-## 7. Module Layout
+## 8. Module Layout
 
 ```text
 lvnotes/core/
@@ -553,7 +646,7 @@ lvnotes/core/
 
 ---
 
-## 8. Dependencies
+## 9. Dependencies
 
 `core/` 允许依赖:
 
@@ -576,7 +669,7 @@ lvnotes/core/
 
 ---
 
-## 9. Implementation Order
+## 10. Implementation Order
 
 建议顺序:
 
@@ -605,5 +698,5 @@ python -c "import lvnotes.core.cache"
 3. 所有跨模块 schema 在 `core/schemas/`
 4. Artifacts 是跨管线产物访问唯一入口
 5. 原子写入、prompt hash、路径、时间戳、slug 都有唯一入口
-6. `TaskName` 未知值会触发 `ConfigError`
+6. 未知任务名会触发 `ConfigError`
 7. `--debug` 不进入配置、不参与缓存键

@@ -83,7 +83,7 @@ refine 一旦进入 sliding window 模式,后续段全部维持该模式,不退�
 def run(ctx: PipelineContext) -> StageOutput: ...
 ```
 
-Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`AudioArtifacts` 实例)访问,与外部消费者走同一接口。
+Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.audio`(`AudioArtifacts` 实例)访问,与外部消费者走同一接口。`ctx.artifacts` 本身是 `ArtifactBundle`。
 
 所有跨段累积型产物的写入(`refined/{seg_id:04d}.json` 等)必须经 `core/cache.py` 的 `atomic_write_json` 入口,见 `coding-standards.md` §6.1。
 
@@ -91,7 +91,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **职责**:把输入视频/音频文件抽取成 16kHz mono `audio.wav`,附带元信息。
 
-**Input**:输入文件路径(来自 `ctx.input_path`)。
+**Input**:输入文件路径(来自 `ctx.source_path`,可为本地视频或音频)。
 
 **Output**:`AudioExtractResult`(schema 见 §4)。落盘 `cache/{input_hash}/audio/audio.wav` + `cache/{input_hash}/audio/extract.json`。
 
@@ -157,8 +157,8 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 **实现要点**:
 - **单次 LLM 调用,不分块**。对 1-3 小时的转录,主流大模型的 context window 足够装下全文(中文转录约 1 token/字,1 小时 ≈ 20-30k token)
 - **短输出原则**(见 §2.1):LLM 输出 JSON 数组,每元素含 `id / start / end / topic_hint / boundary_reason`,不复述段内文本
-- 用 `prompts/segment.jinja` 模板渲染 prompt。模板里给 LLM 看的内容:任务说明 + 目标段数 hint + 最短/最长段时长约束 + 全文转录(含时间戳,按句换行)
-- LLM JSON 解析 + 1 次修复重试 + schema 校验全部走 `llm.complete_json(messages, schema, max_repair_retries=1)` helper,不在本 stage 自己写解析重试逻辑
+- 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:任务说明 + 目标段数 hint + 最短/最长段时长约束 + 全文转录(含时间戳,按句换行)
+- 通过 `client = for_task(ctx.config, "segment")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验全部走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper,不在本 stage 自己写解析重试逻辑
 - 业务级不变量校验在 helper 之上额外做:
   1. 校验时间戳:`start < end`、`markers[i].end == markers[i+1].start`(首尾相邻)、`markers[0].start == 0`、`markers[-1].end == transcript.duration`(容差 ±200ms)
   2. 校验段时长:每段 `end - start` 在 `[min_segment_seconds, max_segment_seconds]` 内
@@ -171,7 +171,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 `target_count_hint` 仅作为生成时的提示,不写入 `SegmentList` 数据本身;若需追溯生成参数,从 `StageOutput.metadata` 读。
 
-**缓存键**:`hash(Transcript) + hash(segment 配置) + hash(LLM profile) + hash_prompt_template("prompts/segment.jinja") + "segment"`。模板 hash 经归一化(见 §2.6)。
+**缓存键**:`hash(Transcript) + hash(segment 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/audio_pipeline/prompts/segment.jinja") + "segment"`。模板 hash 经归一化(见 §2.6)。
 
 **错误处理**:
 - LLM JSON 解析 / schema 失败:由 `complete_json` helper 内 1 次修复重试覆盖;耗尽抛 `LLMError`
@@ -180,7 +180,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 ### 3.4 Stage 4: refine
 
-**职责**:按段串行整理转录文本,产出清洗后的内容、摘要、跨段术语呼应。轻量描述层:原则 + 配置项语义。Prompt 模板的具体形态见 `audio_pipeline/prompts/refine.jinja`。
+**职责**:按段串行整理转录文本,产出清洗后的内容、摘要、跨段术语呼应。轻量描述层:原则 + 配置项语义。Prompt 模板的具体形态见 `lvnotes/audio_pipeline/prompts/refine.jinja`。
 
 **Input**:`ctx.artifacts.audio.get_transcript()` + `ctx.artifacts.audio.get_segments()`。
 
@@ -189,6 +189,8 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 **实现要点**:
 
 *为什么串行*:每段 K 调 LLM 时,prompt 中包含前 K-1 段已整理产物。让 LLM "续写",保证术语、风格、详略一致。并行整理无法做到这一点。
+
+*LLM 调用*:通过 `client = for_task(ctx.config, "refine")` 获取 LLM client。单段 JSON 输出解析、修复重试与 schema 校验统一走 `complete_json(client, messages, schema, options, max_repair_retries=1)`。
 
 *Prompt cache 命中规则*:system message 内容**严格按以下顺序排列**:
 
@@ -226,7 +228,7 @@ LLM 输出的 `cross_refs` 必须满足:
 - `sliding_window_token_threshold: int` —— 默认 30000
 - `sliding_window_recent_segments: int` —— 默认 5
 
-**缓存键**:stage 级,`hash(Transcript) + hash(SegmentList) + hash(refine 配置) + hash(LLM profile) + hash_prompt_template("prompts/refine.jinja") + "refine"`。命中时直接返回 `RefinedTranscript`,不进入 stage。未命中时进入 stage,扫描 `refined/*.json` 走断点续跑。
+**缓存键**:stage 级,`hash(Transcript) + hash(SegmentList) + hash(refine 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/audio_pipeline/prompts/refine.jinja") + "refine"`。命中时直接返回 `RefinedTranscript`,不进入 stage。未命中时进入 stage,扫描 `refined/*.json` 走断点续跑。
 
 **错误处理**:
 - 单段 LLM JSON / schema 失败:`complete_json` 内 1 次修复重试覆盖;耗尽抛 `LLMError`,整个 refine 中止(已完成段保留落盘,下次重跑接续)
@@ -253,7 +255,7 @@ class AudioExtractResult:
     duration: float                 # 秒
     sample_rate: int                # 重采样后的采样率,与 audio_pipeline.extract.sample_rate 一致
     channels: int                   # 重采样后的通道数,与 audio_pipeline.extract.channels 一致
-    source_video_path: Path         # 输入文件原始路径(可能是视频也可能是音频)
+    source_path: Path               # 输入文件原始路径(可能是视频也可能是音频)
     source_codec: str               # 原始编码格式标识
     source_sample_rate: int         # 原始采样率
     source_channels: int            # 原始通道数
@@ -328,7 +330,7 @@ class RefinedTranscript:
 
 ## 5. Downstream Interfaces — `AudioArtifacts`
 
-**这是音频管线对下游的唯一稳定 API。** 多模管线和合并阶段不允许 `from audio_pipeline import ...`,只能 `from core.artifacts import AudioArtifacts`。本管线内部 stage 之间也通过 `ctx.artifacts` 访问上游产物,与外部消费者走同一接口。
+**这是音频管线对下游的唯一稳定 API。** 多模管线和合并阶段不允许 `from audio_pipeline import ...`,只能通过 `ctx.artifacts.audio` 取得 `AudioArtifacts`。本管线内部 stage 之间也通过 `ctx.artifacts.audio` 访问上游产物,与外部消费者走同一接口。`ctx.artifacts` 是 `ArtifactBundle`。
 
 ```python
 class AudioArtifacts:
@@ -440,7 +442,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 ```
 
 `PipelineContext` 定义在 `core/context.py`,至少包含:
-- `ctx.input_path: Path`
+- `ctx.source_path: Path`
 - `ctx.config: Config`
 - `ctx.paths: PipelinePaths`
 - `ctx.artifacts: ArtifactBundle`
@@ -453,12 +455,12 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 | 来源 | 允许? |
 |---|---|
 | `core/`(schemas / paths / timestamps / slugs / pipeline / cache / config / context / logging / exceptions / artifacts / constants) | ✅ |
-| `llm/`(含 `llm.complete_json` helper) | ✅(仅 stage 3、4) |
+| `llm/`(含 `complete_json` / `complete_text` helper) | ✅(仅 stage 3、4) |
 | `asr/` | ✅(仅 stage 2) |
 | `media/` | ✅(仅 stage 1) |
 | `visual_pipeline/` | ❌ |
 | `merge/` | ❌ |
-| `audio_pipeline/` 内的其他 stage 文件 | ❌(stage 间通过 `ctx.artifacts` 解耦) |
+| `audio_pipeline/` 内的其他 stage 文件 | ❌(stage 间通过 `ctx.artifacts.audio` 解耦) |
 | `openai` / `anthropic` 等 SDK 直接 import | ❌(必须经 `llm/`) |
 | `faster_whisper` 直接 import | ❌(必须经 `asr/`) |
 | `subprocess` 调 ffmpeg | ❌(必须经 `media/`) |

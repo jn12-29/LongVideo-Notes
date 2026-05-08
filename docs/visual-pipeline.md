@@ -14,13 +14,13 @@
 |---|---|---|---|
 | 1 | sample | ffmpeg（经 `media/`） | 1fps 采样帧 |
 | 2 | cluster | pHash + 直方图 | 视觉段（连续渐变合并） |
-| 3 | judge | 弱 VLM（经 `llm/`） | 每段 medium / is_meaningful / evolution / richest_frame |
+| 3 | judge | 弱 VLM（经 `llm/`） | 每段 medium / is_meaningful / evolution / richest_frame_id |
 | 4 | select | 拉普拉斯方差 | 每段 1 张代表帧（无意义段丢弃） |
 | 5 | describe | 强 VLM + 转录（经 `llm/` + `AudioArtifacts`） | 每个代表帧的详细图文描述 |
 
-**对外产物**集中在 `VisualArtifacts`（`core/artifacts.py`）。合并阶段只通过这个接口读取，不直接 import `visual_pipeline/` 内部，也不直接读缓存文件。
+**对外产物**集中在 `VisualArtifacts`（`core/artifacts.py`）。合并阶段通过 `ctx.artifacts.visual` 读取，不直接 import `visual_pipeline/` 内部，也不直接读缓存文件。`ctx.artifacts` 本身是 `ArtifactBundle`。
 
-**本管线不依赖 `audio_pipeline/` 内部模块**。stage 5 需要音频管线 refine 产物时，只能通过 `AudioArtifacts.get_text_at(..., strip_refs=True)` 读取指定时间区间的讲解文本。
+**本管线不依赖 `audio_pipeline/` 内部模块**。stage 5 需要音频管线 refine 产物时，只能通过 `ctx.artifacts.audio.get_text_at(..., strip_refs=True)` 读取指定时间区间的讲解文本。
 
 ---
 
@@ -58,11 +58,13 @@ stage 3 使用弱 VLM 判断画面是否有意义、介质类型和最有信息�
 def run(ctx: PipelineContext) -> StageOutput: ...
 ```
 
+Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifacts.audio`；需要对外暴露视觉产物时由 `ctx.artifacts.visual` 对应的 `VisualArtifacts` 读取。
+
 ### 3.1 Stage 1: sample
 
 **职责**：从输入视频按配置 fps 抽取采样帧。
 
-**Input**：输入视频路径（来自 `ctx.input_path`）。
+**Input**：输入视频路径（来自 `ctx.source_path`）。
 
 **Output**：采样帧目录 + `VisualSampleIndex`。落盘到 `cache/{input_hash}/visual/frames/` 与 `cache/{input_hash}/visual/sample.json`。
 
@@ -111,12 +113,12 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **实现要点**：
 - 每段最多传首 / 中 / 末三帧给弱 VLM
-- 输出 `medium`、`is_meaningful`、`evolution`、`richest_frame`
-- LLM JSON 解析 + 1 次修复重试 + schema 校验走 `llm.complete_json()` helper
+- 输出 `medium`、`is_meaningful`、`evolution`、`richest_frame_id`
+- 通过 `client = for_task(ctx.config, "slide_judge")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper
 
 **配置项**：使用 `tasks.slide_judge` 映射到的 LLM profile。
 
-**缓存键**：`hash(VisualSegmentList) + hash(judge 配置) + hash(LLM profile) + hash_prompt_template("prompts/judge.jinja") + "visual_judge"`。
+**缓存键**：`hash(VisualSegmentList) + hash(judge 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/visual_pipeline/prompts/judge.jinja") + "visual_judge"`。
 
 **错误处理**：LLM 输出违反 schema 或业务不变量 → `LLMError`。
 
@@ -130,7 +132,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **实现要点**：
 - `is_meaningful=False` 的段不产出代表帧
-- 优先使用 judge 给出的 `richest_frame`
+- 优先使用 judge 给出的 `richest_frame_id`
 - 必要时用拉普拉斯方差在候选帧中选择更清晰的一张
 
 **配置项**：第一版可无。
@@ -143,7 +145,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **职责**：用强 VLM 为代表帧生成结合讲解文本的详细视觉描述。
 
-**Input**：`list[VisualSelection]` + `AudioArtifacts.get_text_at(start, end, strip_refs=True)`。
+**Input**：`list[VisualSelection]` + `ctx.artifacts.audio.get_text_at(start, end, strip_refs=True)`。
 
 **Output**：`list[VisualDescription]`，落盘 `cache/{input_hash}/visual/descriptions.json`。
 
@@ -151,11 +153,11 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - 启动前由 CLI 调度层保证 `AudioArtifacts.is_complete() == True`
 - 对每个代表帧，取视觉段时间区间对应的讲解文本作为 VLM 文本上下文
 - 不直接读取 `refined_transcript.json`，只通过 `AudioArtifacts`
-- LLM JSON 解析 + 1 次修复重试 + schema 校验走 `llm.complete_json()` helper
+- 通过 `client = for_task(ctx.config, "slide_describe")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper
 
 **配置项**：使用 `tasks.slide_describe` 映射到的 LLM profile。
 
-**缓存键**：`hash(list[VisualSelection]) + hash(相关 AudioArtifacts 文本内容) + hash(describe 配置) + hash(LLM profile) + hash_prompt_template("prompts/describe.jinja") + "visual_describe"`。
+**缓存键**：`hash(list[VisualSelection]) + hash(相关 AudioArtifacts 文本内容) + hash(describe 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/visual_pipeline/prompts/describe.jinja") + "visual_describe"`。
 
 **错误处理**：音频产物未完成 → `CacheError`；VLM 失败 → `LLMError`。
 
@@ -173,7 +175,7 @@ from pathlib import Path
 class SampledFrame:
     id: int
     timestamp: float
-    path: Path
+    image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
 
 @dataclass(frozen=True)
 class VisualSampleIndex:
@@ -203,7 +205,7 @@ class VisualJudgement:
 class VisualSelection:
     segment_id: int
     frame_id: int
-    frame_path: Path
+    image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
     start: float
     end: float
     medium: str
@@ -211,7 +213,7 @@ class VisualSelection:
 @dataclass(frozen=True)
 class VisualDescription:
     segment_id: int
-    frame_path: Path
+    image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
     start: float
     end: float
     medium: str
@@ -232,7 +234,7 @@ class VisualDescription:
 
 ## 5. Downstream Interfaces — `VisualArtifacts`
 
-`VisualArtifacts` 是多模管线对合并阶段的唯一稳定 API。合并阶段不允许 import `visual_pipeline/` 内部模块。
+`VisualArtifacts` 是多模管线对合并阶段的唯一稳定 API。合并阶段不允许 import `visual_pipeline/` 内部模块，只能通过 `ctx.artifacts.visual` 访问。纯音频模式下 `ctx.artifacts.visual is None`。
 
 ```python
 class VisualArtifacts:

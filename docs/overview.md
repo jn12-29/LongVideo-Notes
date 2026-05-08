@@ -54,7 +54,7 @@
 
 ### 2.4 LLM 与 ASR 后端
 
-- **LLM**:通过统一的 provider 抽象层,支持任意 OpenAI Chat 兼容 endpoint(OpenAI、OpenRouter、本地 vLLM、各类反代、DeepSeek、Qwen 等)、OpenAI Responses API、Anthropic Messages API。配置文件中可为不同任务(切分、整理、视觉判断、视觉描述、大纲、分章)配置不同的 profile。
+- **LLM**:通过统一的 provider 抽象层,第一版实现 `openai_chat`、`openai_responses`、`anthropic_messages`、`openai_compatible_chat`。其中 `openai_compatible_chat` 覆盖 OpenAI、OpenRouter、本地 vLLM、各类反代、DeepSeek、Qwen 等 Chat Completions 兼容 endpoint。配置文件中可为不同任务(切分、整理、视觉判断、视觉描述、大纲、分章)配置不同的 profile。
 - **ASR**:默认本地 faster-whisper(支持 GPU 批量推理)。抽象接口预留,将来可加 OpenAI / Groq / 国内厂商的 Whisper API 实现。
 
 ---
@@ -94,7 +94,7 @@ Stage 3 是 LLM 一次性看全文输出切分点(短输出,避免长输出衰�
 | ----- | -------- | -------------- | --------------------------------------------------------- |
 | 1     | sample   | ffmpeg         | 1fps 采样帧                                               |
 | 2     | cluster  | pHash + 直方图 | 视觉段(连续渐变合并)                                      |
-| 3     | judge    | 弱 VLM         | 每段的 medium / is_meaningful / evolution / richest_frame |
+| 3     | judge    | 弱 VLM         | 每段的 medium / is_meaningful / evolution / richest_frame_id |
 | 4     | select   | 拉普拉斯方差   | 每段 1 张代表帧(无意义段丢弃)                             |
 | 5     | describe | 强 VLM + 转录  | 每个代表帧的详细图文描述                                  |
 
@@ -106,8 +106,8 @@ Stage 2 用滑动窗口聚类(双阈值 + 跟段首累积比对),把相邻渐变
 | -------- | ---------- | ----------------------------------------------------- |
 | unify    | 纯逻辑     | `ContentBlock` 序列(按时间排序,含转录 + 可选视觉信息) |
 | outline  | LLM        | 章节结构 (`outline.json`)                             |
-| section  | LLM (并发) | 每章 Markdown (`sections/*.md`),保留内部 marker       |
-| assemble | 纯逻辑     | 最终 `note.md`,marker 替换为人类可读形态              |
+| section  | LLM (并发) | 每章 Markdown (`sections/{chapter_id:03d}.md`),保留内部 marker |
+| assemble | 纯逻辑     | 最终 `output_dir/note.md`,marker 替换为人类可读形态          |
 
 `ContentBlock` 是统一抽象:纯音频模式下所有 block 没有视觉字段,多模模式下有视觉的 block 含画面+描述。下游 outline / section 不区分两种模式。
 
@@ -126,6 +126,11 @@ longvideo-notes/
 
 │
 ├── docs/
+│   ├── core.md                  (core 框架层详细设计)
+│   ├── media.md                 (ffmpeg / ffprobe 唯一入口详细设计)
+│   ├── llm.md                   (LLM provider 详细设计)
+│   ├── asr.md                   (ASR 抽象详细设计)
+│   ├── cli.md                   (CLI 命令与调度详细设计)
 │   ├── audio-pipeline.md        (音频管线详细设计)
 │   ├── visual-pipeline.md       (多模管线详细设计,第一版可占位)
 │   ├── merge.md                 (合并阶段详细设计)
@@ -150,7 +155,7 @@ longvideo-notes/
 │   │   ├── slugs.py             (slug / chapter anchor 唯一来源)
 │   │   ├── pipeline.py          (Stage 抽象 + StageOutput)
 │   │   ├── cache.py             (内容寻址缓存 + atomic_write_* + hash_prompt_template)
-│   │   ├── config.py            (pydantic-settings 配置加载,含 TaskName 封闭枚举)
+│   │   ├── config.py            (pydantic-settings 配置加载,含封闭任务名集合)
 │   │   ├── context.py           (PipelineContext)
 │   │   ├── exceptions.py
 │   │   ├── constants.py
@@ -166,7 +171,8 @@ longvideo-notes/
 │   │   ├── types.py
 │   │   ├── openai_chat.py
 │   │   ├── openai_responses.py
-│   │   ├── anthropic.py
+│   │   ├── anthropic_messages.py
+│   │   ├── openai_compatible_chat.py
 │   │   ├── factory.py
 │   │   ├── json_helper.py       (complete_json:LLM JSON 解析 + 1 次修复重试)
 │   │   └── budget.py            (token / 成本预估)
@@ -230,8 +236,8 @@ longvideo-notes/
         ├── content_blocks.json
         ├── outline.json
         ├── sections/
-        │   └── {chapter_id}.md
-        └── note.md
+        │   └── {chapter_id:03d}.md
+        └── note.md              (cache 副本;最终产物写入 output_dir/note.md)
 ```
 
 ---
@@ -278,20 +284,29 @@ longvideo-notes/
 
 **原则**:
 
-- **全项目唯一允许 `import openai` / `import anthropic` 的地方**。其他模块通过 `llm.get_client(profile_name)` 或 `llm.for_task(task_name)` 获取统一接口的客户端。
+- **全项目唯一允许 `import openai` / `import anthropic` 的地方**。其他模块通过 `get_client(config, profile_name)` 或 `for_task(config, task_name)` 获取统一接口的客户端。
 - 实现按"协议"切,不按"服务商"切:
-  - `OpenAIChatClient` 覆盖 OpenAI、OpenRouter、本地 vLLM、DeepSeek、Qwen、各类反代等所有 OpenAI Chat 兼容 endpoint
+  - `OpenAIChatClient` 覆盖 OpenAI Chat 协议
+  - `OpenAICompatibleChatClient` 覆盖 OpenAI、OpenRouter、本地 vLLM、DeepSeek、Qwen、各类反代等所有 OpenAI Chat 兼容 endpoint
   - `OpenAIResponsesClient` 给需要 Responses API 的模型
-  - `AnthropicClient` 给 Anthropic 原生 API
-- 配置中通过 profile 区分 endpoint,profile 包含:协议、base_url、api_key 环境变量名、model、capabilities flags(vision / prompt_cache / json_mode / max_context)。
-- 任务 → profile 映射在配置中:`tasks.segment: gpt5_main`、`tasks.slide_judge: weak_vlm` 等。代码用 `llm.for_task("segment")` 获取,配置改 profile 不改代码。
+  - `AnthropicMessagesClient` 给 Anthropic Messages API
+- 配置中通过 profile 区分 endpoint,profile 包含:provider、base_url、api_key 环境变量名、model、capabilities flags(vision / prompt_cache / json_mode / max_context)。
+- 任务 → profile 映射在配置中:`tasks.segment: gpt5_main`、`tasks.slide_judge: weak_vlm` 等。代码用 `for_task(config, "segment")` 获取,配置改 profile 不改代码。
 
-**JSON 输出 helper**:`llm/json_helper.py` 提供 `complete_json(messages, schema, max_repair_retries=1) -> dict`,统一处理"LLM 输出 JSON 解析 + 1 次修复重试 + schema 校验"。所有需要 LLM 输出结构化数据的 stage(segment / outline / 等)走此 helper,不在 stage 内自己写解析重试逻辑。
+**JSON 输出 helper**:`llm/json_helper.py` 提供 `complete_json(client, messages, schema, options, max_repair_retries=1)`,统一处理"LLM 输出 JSON 解析 + 1 次修复重试 + schema 校验"。所有需要 LLM 输出结构化数据的 stage(segment / outline / 等)走此 helper,不在 stage 内自己写解析重试逻辑。
+
+典型调用:
+
+```python
+client = for_task(config, "segment")
+segments = complete_json(client, messages, SegmentList, options)
+```
 
 **接口契约**:
 
-- `LLMClient.complete(messages, **kwargs) -> LLMResponse`
-- `LLMClient.stream(messages, **kwargs) -> Iterator[str]`
+- `LLMClient.complete(messages, options=None) -> LLMTextResult`
+- `complete_text(client, messages, options) -> LLMTextResult`
+- `complete_json(client, messages, schema, options, max_repair_retries=1) -> dict`
 - 错误归一化:所有实现统一抛 `AuthError` / `RateLimitError` / `ContextLengthError` / `TransportError`,调用方只 catch 这些。
 
 ### 5.4 `asr/` —— ASR 抽象
@@ -332,6 +347,8 @@ longvideo-notes/
 - 第一版可以只创建目录和占位文件,并在 `docs/visual-pipeline.md` 中声明"未实现"。
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
+
+**字段命名约定**:视觉相关 schema 使用 `richest_frame_id` 表示 judge 选出的信息量最高帧,使用 `image_source_path` 表示后续 Markdown 可引用的图片源路径。合并阶段消费视觉信息时沿用这些字段语义,不再引入 `richest_frame`、`frame_path` 等同义字段。全局 `source_path` 只表示原始输入音频/视频路径。
 
 ### 5.7 `merge/` —— 合并与笔记生成
 
@@ -380,14 +397,14 @@ longvideo-notes/
 按这个顺序写,每一步都端到端可跑。
 
 1. **基础设施**:`core/`(schemas、paths、timestamps、slugs、pipeline、cache、config、logging、context)+ `media/probe.py` + `media/audio.py` + `cli/app.py` 骨架 + `.importlinter` 契约。
-2. **LLM 抽象**:`llm/`(base、types、openai_chat、json_helper、factory)。第一版只实现 OpenAI Chat 协议,覆盖 90% 场景。
+2. **LLM 抽象**:`llm/`(base、types、openai_chat、openai_responses、anthropic_messages、openai_compatible_chat、json_helper、factory)。第一版实现 `openai_chat`、`openai_responses`、`anthropic_messages`、`openai_compatible_chat`。
 3. **ASR 抽象**:`asr/`(base、faster_whisper_local、factory)。
 4. **音频管线**:按 stage 顺序 extract → transcribe → segment → refine,每个 stage 独立提交独立 review。
 5. **合并阶段(简化版)**:`merge/unify.py`(纯音频模式直接转换)+ `outline` + `section` + `assemble`。打通"音频文件 → Markdown 笔记"端到端。
 6. **测试与打磨**:用真实音频跑全流程,调 prompt、调阈值、修 bug。
 7. **多模管线**:5 个 stage 顺序实现。
 8. **合并阶段升级**:`merge/unify.py` 支持双管线合并。
-9. **LLM 抽象扩展**:增加 `openai_responses` / `anthropic` 协议实现。
+9. **LLM 抽象打磨**:完善各协议的错误归一化、能力检查与真实 endpoint 兼容性。
 
 每一步完成的"验收标准"是:
 
@@ -402,7 +419,7 @@ longvideo-notes/
 
 完整配置示例计划放在 `config.example.yaml`,当前这里只给框架。
 
-`tasks.*` 是封闭枚举,可用任务名集中在 `core/config.py` 的 `TaskName` 字面量类型中(`segment` / `refine` / `outline` / `section` / `slide_judge` / `slide_describe`)。新增任务时**先**改 `TaskName` 再用,运行时配置含未知任务名直接 `ConfigError` 退出。
+`tasks.*` 是封闭任务名映射。第一版任务名为 `segment` / `refine` / `outline` / `section` / `slide_judge` / `slide_describe`。新增任务名必须先更新配置 schema,运行时配置含未知任务名直接 `ConfigError` 退出。
 
 ```yaml
 project:
@@ -410,17 +427,16 @@ project:
   output_dir: ./output # 最终 note.md 写入这里;cache 内 note.md 作为可复查的中间产物
 
 llm:
-  active_default: gpt5_main
   profiles:
     gpt5_main:
-      protocol: openai_chat
+      provider: openai_chat
       base_url: https://api.openai.com/v1
       api_key_env: OPENAI_API_KEY
       model: gpt-5
       capabilities: [vision, prompt_cache, json_mode]
       max_context: 1000000
     weak_vlm:
-      protocol: openai_chat
+      provider: openai_compatible_chat
       base_url: https://openrouter.ai/api/v1
       api_key_env: OPENROUTER_API_KEY
       model: google/gemini-2.5-flash
@@ -475,7 +491,7 @@ merge:
     include_toc: true # 顶部目录
     include_metadata: true # YAML frontmatter(输入路径、时长、模式等)
     video_url_template: null # 默认时间戳为纯文本;配置后渲染为跳转链接
-    # 例: "file://{video_path}?t={seconds_int}"
+    # 例: "file://{source_path}?t={seconds_int}"
     top_title: null # null 时从输入文件名派生
 ```
 
@@ -491,14 +507,13 @@ merge:
 
 ## 10. 文档索引
 
-- `docs/coding-standards.md` —— 开发规范、工程原则、针对 coding agent 的注意事项。**所有写代码前必读**。
-- `docs/core.md` —— core 框架层详细设计(schema、artifacts、paths、cache、config、context 等)。
-- `docs/media.md` —— ffmpeg / ffprobe 唯一入口详细设计。
-- `docs/llm.md` —— LLM provider 抽象、profile、JSON helper、错误归一化详细设计。
-- `docs/asr.md` —— ASR 抽象与 faster-whisper 本地实现详细设计。
-- `docs/audio-pipeline.md` —— 音频管线 4 个 stage 的详细设计与接口契约。
-- `docs/visual-pipeline.md` —— 多模管线 5 个 stage 的详细设计(第一版可仅占位)。
-- `docs/merge.md` —— 合并阶段的详细设计。
-- `docs/cli.md` —— CLI 命令、模式规则、调度与缓存控制详细设计。
+- `docs/cli.md` —— CLI 权威:命令、模式规则、调度与缓存控制详细设计。
+- `docs/llm.md` —— LLM 权威:provider 抽象、profile、JSON helper、错误归一化详细设计。
+- `docs/core.md` + `docs/coding-standards.md` —— 架构/实现约束权威:schema、artifacts、paths、cache、config、context、模块边界与开发规范。
+- `docs/media.md` —— media 模块权威:ffmpeg / ffprobe 唯一入口详细设计。
+- `docs/asr.md` —— ASR 模块权威:ASR 抽象与 faster-whisper 本地实现详细设计。
+- `docs/audio-pipeline.md` —— 音频管线权威:4 个 stage 的详细设计与接口契约。
+- `docs/visual-pipeline.md` —— 多模管线权威:5 个 stage 的详细设计。
+- `docs/merge.md` —— 合并阶段权威:最终 Markdown 生成与用户产物契约。
 
 每份管线文档都按以下结构组织:Overview、Design Considerations(设计要点)、Stages(含每个 stage 的 input/output schema、实现要点、配置项、缓存规则、错误处理)、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。
