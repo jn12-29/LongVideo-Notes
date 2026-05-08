@@ -15,11 +15,20 @@ class AudioExtractResult:
 
 
 @dataclass(frozen=True)
+class WordTimestamp:
+    word: str
+    start: float
+    end: float
+    probability: float
+
+
+@dataclass(frozen=True)
 class TranscriptSegment:
     id: int
     start: float
     end: float
     text: str
+    words: list[WordTimestamp]
 
 
 @dataclass(frozen=True)

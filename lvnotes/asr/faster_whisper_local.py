@@ -3,7 +3,7 @@ from pathlib import Path
 
 from lvnotes.core.config import ASRConfig
 from lvnotes.core.exceptions import ASRError
-from lvnotes.core.schemas import Transcript, TranscriptSegment
+from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
 from lvnotes.core.timestamps import normalize_seconds
 
 log = logging.getLogger(__name__)
@@ -86,9 +86,10 @@ def _run_transcribe(
 ) -> tuple[object, object]:
     kwargs: dict[str, object] = {
         "language": config.language,
-        "word_timestamps": False,
+        "word_timestamps": True,
         "vad_filter": config.vad,
         "condition_on_previous_text": False,
+        "initial_prompt": _initial_prompt_for_language(config.language),
     }
     if batch_size is not None:
         kwargs["batch_size"] = batch_size
@@ -111,9 +112,30 @@ def _normalize_segments(segments: list[object]) -> list[TranscriptSegment]:
                 start=start,
                 end=end,
                 text=text,
+                words=_normalize_words(getattr(segment, "words", None)),
             )
         )
     return normalized
+
+
+def _normalize_words(words: object) -> list[WordTimestamp]:
+    if words is None:
+        return []
+    normalized: list[WordTimestamp] = []
+    for word in words:
+        start = normalize_seconds(float(getattr(word, "start")))
+        end = normalize_seconds(float(getattr(word, "end")))
+        if start >= end:
+            raise AssertionError("ASR word start must be less than end")
+        normalized.append(
+            WordTimestamp(
+                word=str(getattr(word, "word", "")).strip(),
+                start=start,
+                end=end,
+                probability=float(getattr(word, "probability", 0.0)),
+            )
+        )
+    return sorted(normalized, key=lambda word: word.start)
 
 
 def _language(transcript_info: object, fallback: str) -> str:
@@ -124,3 +146,9 @@ def _language(transcript_info: object, fallback: str) -> str:
 def _duration(transcript_info: object) -> float:
     duration = getattr(transcript_info, "duration", None)
     return normalize_seconds(float(duration)) if duration is not None else 0.0
+
+
+def _initial_prompt_for_language(language: str) -> str | None:
+    if language == "zh":
+        return "以下是中文课程讲解转录，请使用自然的中文标点。"
+    return None

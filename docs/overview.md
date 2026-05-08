@@ -82,7 +82,7 @@
 | Stage | 名称       | 工具           | 产物                                                       |
 | ----- | ---------- | -------------- | ---------------------------------------------------------- |
 | 1     | extract    | ffmpeg         | `audio.wav` (16kHz mono) + 元信息                          |
-| 2     | transcribe | faster-whisper | `transcript_raw.json` (段级时间戳 + 转录文本)              |
+| 2     | transcribe | faster-whisper | `transcript_raw.json` (带 word-level 时间戳)               |
 | 3     | segment    | LLM            | `segments.json` (语义切分点)                               |
 | 4     | refine     | LLM            | `refined_transcript.json` (按段清洗 + 摘要 + 跨段术语呼应) |
 

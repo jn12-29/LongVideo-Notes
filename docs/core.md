@@ -137,6 +137,7 @@ core/schemas/
 `audio.py` 定义:
 
 - `AudioExtractResult`
+- `WordTimestamp`
 - `TranscriptSegment`
 - `Transcript`
 - `SegmentMarker`
