@@ -20,8 +20,9 @@
 ```bash
 lvnotes run <input-file>
 lvnotes run <input-file> --mm
-lvnotes inspect <stage>
-lvnotes assemble --no-cache
+lvnotes inspect audio refined <input-file>
+lvnotes inspect merge note <input-file> --paths
+lvnotes assemble <input-file> --no-cache
 ```
 
 默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。

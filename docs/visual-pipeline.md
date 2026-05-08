@@ -107,7 +107,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`VisualSegmentList` + 每段首 / 中 / 末帧。
 
-**Output**：`VisualJudgementList`，落盘 `cache/{input_hash}/visual/judgements.json`。
+**Output**：`list[VisualJudgement]`，落盘 `cache/{input_hash}/visual/judgements.json`。
 
 **实现要点**：
 - 每段最多传首 / 中 / 末三帧给弱 VLM
@@ -124,9 +124,9 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **职责**：为每个有意义视觉段选择 1 张代表帧。
 
-**Input**：`VisualJudgementList` + 采样帧。
+**Input**：`list[VisualJudgement]` + 采样帧。
 
-**Output**：`VisualSelectionList`，落盘 `cache/{input_hash}/visual/selections.json`。
+**Output**：`list[VisualSelection]`，落盘 `cache/{input_hash}/visual/selections.json`。
 
 **实现要点**：
 - `is_meaningful=False` 的段不产出代表帧
@@ -135,7 +135,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **配置项**：第一版可无。
 
-**缓存键**：`hash(VisualJudgementList) + hash(select 配置) + "visual_select"`。
+**缓存键**：`hash(list[VisualJudgement]) + hash(select 配置) + "visual_select"`。
 
 **错误处理**：代表帧路径不存在 → `CacheError`。
 
@@ -143,9 +143,9 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **职责**：用强 VLM 为代表帧生成结合讲解文本的详细视觉描述。
 
-**Input**：`VisualSelectionList` + `AudioArtifacts.get_text_at(start, end, strip_refs=True)`。
+**Input**：`list[VisualSelection]` + `AudioArtifacts.get_text_at(start, end, strip_refs=True)`。
 
-**Output**：`VisualDescriptionList`，落盘 `cache/{input_hash}/visual/descriptions.json`。
+**Output**：`list[VisualDescription]`，落盘 `cache/{input_hash}/visual/descriptions.json`。
 
 **实现要点**：
 - 启动前由 CLI 调度层保证 `AudioArtifacts.is_complete() == True`
@@ -155,7 +155,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **配置项**：使用 `tasks.slide_describe` 映射到的 LLM profile。
 
-**缓存键**：`hash(VisualSelectionList) + hash(相关 AudioArtifacts 文本内容) + hash(describe 配置) + hash(LLM profile) + hash_prompt_template("prompts/describe.jinja") + "visual_describe"`。
+**缓存键**：`hash(list[VisualSelection]) + hash(相关 AudioArtifacts 文本内容) + hash(describe 配置) + hash(LLM profile) + hash_prompt_template("prompts/describe.jinja") + "visual_describe"`。
 
 **错误处理**：音频产物未完成 → `CacheError`；VLM 失败 → `LLMError`。
 
@@ -236,7 +236,7 @@ class VisualDescription:
 
 ```python
 class VisualArtifacts:
-    def __init__(self, input_hash: str, paths: Paths) -> None: ...
+    def __init__(self, input_hash: str, paths: PipelinePaths) -> None: ...
 
     def get_samples(self) -> VisualSampleIndex: ...
     def get_segments(self) -> VisualSegmentList: ...

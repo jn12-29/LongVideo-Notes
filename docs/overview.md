@@ -213,13 +213,24 @@ longvideo-notes/
 └── cache/                       (运行时产生,gitignore)
     └── {input_hash}/
         ├── audio/
+        │   ├── audio.wav
+        │   └── extract.json
         ├── visual/              (多模模式下)
+        │   ├── frames/
+        │   ├── sample.json
+        │   ├── segments.json
+        │   ├── judgements.json
+        │   ├── selections.json
+        │   └── descriptions.json
         ├── transcript_raw.json
         ├── segments.json
         ├── refined/
+        │   └── {seg_id}.json
+        ├── refined_transcript.json
         ├── content_blocks.json
         ├── outline.json
         ├── sections/
+        │   └── {chapter_id}.md
         └── note.md
 ```
 
@@ -341,7 +352,7 @@ longvideo-notes/
 
 **原则**:
 
-- 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes inspect`、以及顶层 stage 命令(如 `lvnotes extract`、`lvnotes transcribe`、`lvnotes outline`、`lvnotes assemble`)。
+- 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes inspect`、以及顶层 stage 命令(如 `lvnotes extract <input-file>`、`lvnotes transcribe <input-file>`、`lvnotes outline <input-file>`、`lvnotes assemble <input-file>`)。
 - 调度结构按双管线设计。调度层可以并发执行音频管线和多模管线,但每个 stage 对外仍固定暴露同步 `run(ctx) -> StageOutput` 接口;多模管线 disabled 时直接跳过。
 - refine stage 的开发期审核能力通过 CLI 参数暴露,如 `lvnotes refine --debug`;该开关不进入配置文件。
 - 不在 CLI 写业务逻辑。CLI 只负责"解析参数 → 配置 Pipeline → 启动 → 处理输出"。

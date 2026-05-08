@@ -375,14 +375,14 @@ class Outline:
 
 ### CLI 访问入口
 
-CLI 提供 `lvnotes inspect <stage>` 查看任意中间产物，并通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline`、`lvnotes assemble`；实现时在 `cli/app.py` 中描述）。
+CLI 提供 `lvnotes inspect <namespace> <stage> <input-file>` 查看任意中间产物，并通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline <input-file>`、`lvnotes assemble <input-file>`；实现时在 `cli/app.py` 中描述）。
 
 ### 用户编辑流程支持
 
 用户编辑某章 `sections/{i}.md` 后想重新合成笔记：
 
 ```bash
-lvnotes assemble --no-cache  # 跳过 assemble 缓存，重读 sections，重新生成 note.md
+lvnotes assemble <input-file> --no-cache  # 跳过 assemble 缓存，重读 sections，重新生成 note.md
 ```
 
 不需要重跑 section LLM。这种工作流由 per-chapter 缓存 + `assemble` 是纯逻辑共同支持。
@@ -466,7 +466,7 @@ lvnotes/merge/
 2. 缓存机制工作（再跑一次能命中缓存）
 3. 错误路径有测试覆盖
 4. 类型检查通过
-5. 独立 CLI 调用可用（如 `lvnotes outline`、`lvnotes assemble --no-cache`）
+5. 独立 CLI 调用可用（如 `lvnotes outline <input-file>`、`lvnotes assemble <input-file> --no-cache`）
 6. 至少一个其他模块的范例参照（除第一个 stage 外，参照 `audio_pipeline/refine.py` 等）
 
 任意一条不满足不算完成，不要进下一个 stage。

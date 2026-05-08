@@ -14,7 +14,7 @@ CLI 提供四类入口:
 |---|---|---|
 | 端到端运行 | `lvnotes run <input-file>` | 默认纯音频模式,跑音频管线 + 合并阶段 |
 | 端到端多模 | `lvnotes run <input-file> --mm` | 显式启用多模 |
-| 查看产物 | `lvnotes inspect <stage>` | 查看中间产物摘要或路径 |
+| 查看产物 | `lvnotes inspect <namespace> <stage> <input-file>` | 查看中间产物摘要或路径 |
 | 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `sample` / `cluster` / `judge` / `select` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
 
 CLI 的职责:

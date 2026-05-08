@@ -116,7 +116,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **职责**:把 `audio.wav` 转成带 word-level 时间戳的 `Transcript`。
 
-**Input**:`ctx.artifacts.get_extract()` 拿 `AudioExtractResult`。
+**Input**:`ctx.artifacts.audio.get_extract()` 拿 `AudioExtractResult`。
 
 **Output**:`Transcript`(schema 见 §4)。落盘 `cache/{input_hash}/transcript_raw.json`(经 `atomic_write_json`)。
 
@@ -150,7 +150,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **职责**:LLM 看全文转录,输出语义切分点(不重写文本)。
 
-**Input**:`ctx.artifacts.get_transcript()` 拿 `Transcript`。
+**Input**:`ctx.artifacts.audio.get_transcript()` 拿 `Transcript`。
 
 **Output**:`SegmentList`(schema 见 §4)。落盘 `cache/{input_hash}/segments.json`(经 `atomic_write_json`)。
 
@@ -182,7 +182,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts`(`
 
 **职责**:按段串行整理转录文本,产出清洗后的内容、摘要、跨段术语呼应。轻量描述层:原则 + 配置项语义。Prompt 模板的具体形态见 `audio_pipeline/prompts/refine.jinja`。
 
-**Input**:`ctx.artifacts.get_transcript()` + `ctx.artifacts.get_segments()`。
+**Input**:`ctx.artifacts.audio.get_transcript()` + `ctx.artifacts.audio.get_segments()`。
 
 **Output**:每段 `RefinedSegment` 落盘到 `cache/{input_hash}/refined/{seg_id:04d}.json`(经 `atomic_write_json`),全部完成后汇总为 `RefinedTranscript`,落盘 `cache/{input_hash}/refined_transcript.json`(同样经 `atomic_write_json`)。
 
@@ -332,7 +332,7 @@ class RefinedTranscript:
 
 ```python
 class AudioArtifacts:
-    def __init__(self, input_hash: str, paths: Paths) -> None: ...
+    def __init__(self, input_hash: str, paths: PipelinePaths) -> None: ...
 
     # ---- 主产物访问 ----
     def get_extract(self) -> AudioExtractResult: ...
@@ -442,8 +442,8 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 `PipelineContext` 定义在 `core/context.py`,至少包含:
 - `ctx.input_path: Path`
 - `ctx.config: Config`
-- `ctx.paths: Paths`
-- `ctx.artifacts: AudioArtifacts`
+- `ctx.paths: PipelinePaths`
+- `ctx.artifacts: ArtifactBundle`
 - `ctx.input_hash: str`
 
 `StageOutput` 定义在 `core/pipeline.py`,是带缓存元数据的 stage 返回类型。具体 schema 在 `core/pipeline.py` 文档中描述,本文不重复。
