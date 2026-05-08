@@ -23,6 +23,27 @@ Before finishing a documentation edit, search the edited files for obsolete term
 
 Use multiple agents for complex cross-file work when responsibilities can be split by file set or topic. Good fits include documentation consistency rewrites, pre-implementation specification cleanup, cross-module API alignment, and read-only reviews from multiple perspectives. Inspection and review tasks are especially good fits because multiple agents can examine the same files from different angles without write conflicts, then the main agent can merge and rank findings. Do not use multi-agent editing for small single-file changes, tightly coupled algorithm work, or cases where several agents would need to edit the same large section.
 
+After the main agent completes the initial project-structure read, it must explicitly consider whether multiple agents are warranted before editing or concluding on cross-file work. Use multiple independent read-only review agents when the task affects cross-file or cross-module contracts.
+
+Strong triggers include:
+
+- Changes or reviews spanning two or more authority documents.
+- CLI behavior, mode rules, runtime flags, scheduling, cache semantics, paths, config/context fields, shared schemas, artifacts interfaces, public outputs, or cross-document terminology.
+- Documentation consistency checks where the same field, command, stage, path, or behavior appears in multiple files.
+- Preparing or changing implementation for shared contracts such as `core/`, CLI, cache/config/context, schemas, artifacts, or pipeline boundaries.
+- Review findings that affect shared contracts, serialization, caching, runtime state, module boundaries, or public behavior.
+
+For substantial contract work, use at least two read-only reviewers with different perspectives, such as:
+
+- core/shared types/config/cache/context
+- CLI/runtime flags/scheduling
+- audio/visual/merge pipeline contracts
+- documentation consistency and user-facing examples
+
+If the main agent decides not to use multiple agents for a cross-file task, it should briefly state why. Do not use multiple agents for small single-file edits, typo fixes, wording-only cleanup, tightly coupled algorithm work, or unclear requirements that first need clarification.
+
+Review agents must not edit files unless explicitly assigned non-overlapping ownership. Their prompts must specify files to read, review perspective, obsolete terms or conflicts to look for, and require findings with file paths and line numbers.
+
 Preferred workflow:
 
 1. Split the task into non-overlapping file or topic ownership before launching agents.
