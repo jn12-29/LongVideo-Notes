@@ -78,7 +78,7 @@ def transcribe(...) -> dict[str, Any]: ...
 
 dataclass 默认 `frozen=True` 或使用 `pydantic.BaseModel` 的不可变模式。需要修改时构造新实例(用 `dataclasses.replace`)。
 
-例外:缓存累积型数据(如逐段构建的 `RefinedTranscript`)可使用可变 dataclass,但必须在文档中说明。
+需要累积构建的数据应优先使用局部可变列表,完成后一次性构造 frozen dataclass。
 
 ### 2.4 Schema 不携带配置信息
 

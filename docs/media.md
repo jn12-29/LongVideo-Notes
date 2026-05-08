@@ -105,6 +105,11 @@ class MediaProbeResult:
     duration: float
     audio: AudioStreamInfo | None
     video: VideoStreamInfo | None
+
+@dataclass(frozen=True)
+class ExtractedFrame:
+    path: Path
+    timestamp: float
 ```
 
 公开函数:
@@ -121,7 +126,7 @@ def has_video_stream(input_path: Path) -> bool: ...
 - duration 统一为 `float` 秒数,精度毫秒
 - 缺少 audio stream 时 `audio=None`
 - 缺少 video stream 时 `video=None`
-- 输入文件不存在时不做额外预检,让底层错误包装为 `MediaError`
+- 输入文件不存在时不做额外预检,让 ffmpeg / ffprobe 失败并包装为 `MediaError`
 - ffprobe JSON 解析失败包装为 `MediaError`
 
 ### 3.2 `audio.py`
@@ -171,10 +176,10 @@ def extract_frames(
     output_dir: Path,
     fps: float,
     filename_pattern: str,
-) -> list[Path]: ...
+) -> list[ExtractedFrame]: ...
 ```
 
-语义:按固定 fps 从视频中抽取采样帧,返回实际生成的帧路径列表。调用方负责根据返回列表构造 `VisualSampleIndex`。
+语义:按固定 fps 从视频中抽取采样帧,返回实际生成的帧路径与时间戳列表。调用方负责根据返回列表构造 `VisualSampleIndex`。
 
 实现要点:
 
@@ -182,7 +187,8 @@ def extract_frames(
 - 输出目录由调用方保证存在
 - `filename_pattern` 必须是单层文件名模式,例如 `frame_%06d.jpg`
 - 抽帧前不删除目录内已有文件;缓存清理由 stage / cache 层负责
-- 返回列表按文件名排序
+- 返回列表按时间戳排序
+- `timestamp` 由固定 fps 与 0-based 帧序号推导:`timestamp = frame_index / fps`,再经 `core.timestamps.normalize_seconds()` 归一到毫秒。第一版不处理 VFR 精确 PTS;如后续需要精确 PTS,再扩展 media API
 - 输入没有 video stream 时抛 `MediaError`
 - 第一版只支持固定 fps,不做 scene detect / 关键帧抽取 / 裁剪 / 缩放
 
@@ -194,7 +200,7 @@ def extract_frames(
 |---|---|---|
 | `probe_media` | 调 ffprobe,解析元信息 | 不写缓存、不推断处理模式 |
 | `extract_wav` | 抽取 / 转码 wav | 不决定默认配置、不写 `extract.json` |
-| `extract_frames` | 固定 fps 抽帧 | 不做视觉聚类、不生成 `VisualSampleIndex` |
+| `extract_frames` | 固定 fps 抽帧,返回帧路径与时间戳 | 不做视觉聚类、不生成 `VisualSampleIndex` |
 
 允许内部 helper:
 
@@ -224,6 +230,7 @@ if completed.returncode != 0:
 
 | 场景 | 处理 |
 |---|---|
+| 输入文件不存在 | `MediaError` |
 | ffmpeg / ffprobe 不存在 | `MediaError` |
 | 外部命令返回非 0 | `MediaError`,包含 stderr 摘要 |
 | ffprobe 输出不是合法 JSON | `MediaError` |

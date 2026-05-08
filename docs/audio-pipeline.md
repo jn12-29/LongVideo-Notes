@@ -53,7 +53,7 @@ system message 内的内容**严格按固定顺序排列**(任务规则 → seed
 
 refine 阶段在整理第 K 段时,识别当前段引用的前文概念(前 K-1 段已讲过的术语 / 主题),记录到 `RefinedSegment.cross_refs`(前置段 id 列表),并在 `cleaned_text` 中嵌入 **`[[REF:N]]`** 形式的内嵌引用 marker(N 为被引用段的 id)。
 
-用 `[[REF:N]]` 而非"§N"等人类形态是为了让"机器可识别且 LLM 不会自然生成"——下游 section LLM 看到该 marker 时被 prompt 明确要求**原样保留**,assemble 阶段做纯逻辑替换为人类可读形态(如 `[§N](#chapter-anchor)`)。
+用 `[[REF:N]]` 而非"§N"等人类形态是为了让"机器可识别且 LLM 不会自然生成"——下游 section LLM 看到该 marker 时被 prompt 明确要求**原样保留**,assemble 阶段做纯逻辑替换为人类可读形态(如 `[§{N+1}](#chapter-anchor)`)。
 
 **本管线只产出引用 marker 与关系,不做任何渲染**——人类可读形态由 `merge/assemble` 决定。
 
@@ -105,10 +105,10 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - `sample_rate: int` —— 默认 `16000`。重采样目标采样率。validator 限制为正整数且在 `{8000, 16000, 22050, 32000, 44100, 48000}` 之内
 - `channels: int` —— 默认 `1`。重采样目标通道数。validator 限制为 `1` 或 `2`
 
-**缓存键**:`hash(input_file_bytes) + hash(extract 配置) + "extract"`。
+**缓存键**:调用 `build_cache_key("extract", {"input": hash_file(ctx.source_path), "config": hash_json(extract_config)})`。
 
 **错误处理**:
-- 输入文件不存在:自然抛 `FileNotFoundError`,不要"以防万一"加 `path.exists()` 预检(参考 `coding-standards.md` §12.2)
+- 输入文件不存在:不在 stage 内做额外预检,由 `media/` 调 ffmpeg / ffprobe 后包装为 `MediaError`
 - ffmpeg 调用失败:`media/` 内部包装为 `MediaError` 上抛
 - 输出 wav 校验:抽完后断言文件存在 + 时长与 probe 结果在 ±100ms 内一致;断言失败抛 `MediaError`
 
@@ -139,7 +139,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - `asr.vad`: bool,默认 true
 - `asr.language`: ISO 639-1 字符串
 
-**缓存键**:`hash(audio.wav) + hash(asr.* 配置) + hash(asr_backend_version) + "transcribe"`。
+**缓存键**:调用 `build_cache_key("transcribe", {"audio": hash_file(ctx.paths.audio_wav), "config": hash_json(ctx.config.asr), "backend_version": hash_json(asr_backend_version_payload)})`。
 
 **错误处理**:
 - 模型加载失败:`asr/` 包装为 `ASRError`
@@ -156,7 +156,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 
 **实现要点**:
 - **单次 LLM 调用,不分块**。对 1-3 小时的转录,主流大模型的 context window 足够装下全文(中文转录约 1 token/字,1 小时 ≈ 20-30k token)
-- **短输出原则**(见 §2.1):LLM 输出 JSON 数组,每元素含 `id / start / end / topic_hint / boundary_reason`,不复述段内文本
+- **短输出原则**(见 §2.1):LLM 输出 `SegmentList` JSON object,形如 `{"markers": [...]}`;每个 marker 含 `id / start / end / topic_hint / boundary_reason`,不复述段内文本
 - 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:任务说明 + 目标段数 hint + 最短/最长段时长约束 + 全文转录(含时间戳,按句换行)
 - 通过 `client = for_task(ctx.config, "segment")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验全部走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper,不在本 stage 自己写解析重试逻辑
 - 业务级不变量校验在 helper 之上额外做:
@@ -171,7 +171,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 
 `target_count_hint` 仅作为生成时的提示,不写入 `SegmentList` 数据本身;若需追溯生成参数,从 `StageOutput.metadata` 读。
 
-**缓存键**:`hash(Transcript) + hash(segment 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/audio_pipeline/prompts/segment.jinja") + "segment"`。模板 hash 经归一化(见 §2.6)。
+**缓存键**:调用 `build_cache_key("segment", {"transcript": hash_json(Transcript), "config": hash_json(segment 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/audio_pipeline/prompts/segment.jinja")})`。模板 hash 经归一化(见 §2.6)。
 
 **错误处理**:
 - LLM JSON 解析 / schema 失败:由 `complete_json` helper 内 1 次修复重试覆盖;耗尽抛 `LLMError`
@@ -222,13 +222,13 @@ LLM 输出的 `cross_refs` 必须满足:
 
 *debug*:这是开发期调试能力,不进入配置文件。CLI 实现 refine stage 时应预留 `--debug` 参数:第一段 refine 后暂停,把产物打印给用户审核 + 可手工编辑,再重新加载到累积文本继续后续段。默认关闭,仅显式传 CLI 参数时启用。
 
-*断点续跑*:每完成一段就 `atomic_write_json` 落盘 `refined/{seg_id:04d}.json`。stage 启动时扫描该目录,从未完成的最早一段继续。**这是 stage 内部的断点续跑,不是缓存机制**——stage 级缓存(见下"缓存键")一旦失效(如 prompt 模板改了),所有 `refined/*.json` 一并清空重跑。
+*断点续跑*:每完成一段就 `atomic_write_json` 落盘 `refined/{seg_id:04d}.json`。stage 启动时扫描该目录,从未完成的最早一段继续。**这是 stage 内部的断点续跑,不是缓存机制**——stage 级缓存(见下"缓存键")一旦失效(如 prompt 模板改了),或本次 `ctx.no_cache is True`,所有 `refined/*.json` 一并清空重跑。
 
 **配置项**(`audio_pipeline.refine.*`):
 - `sliding_window_token_threshold: int` —— 默认 30000
 - `sliding_window_recent_segments: int` —— 默认 5
 
-**缓存键**:stage 级,`hash(Transcript) + hash(SegmentList) + hash(refine 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/audio_pipeline/prompts/refine.jinja") + "refine"`。命中时直接返回 `RefinedTranscript`,不进入 stage。未命中时进入 stage,扫描 `refined/*.json` 走断点续跑。
+**缓存键**:stage 级,调用 `build_cache_key("refine", {"transcript": hash_json(Transcript), "segments": hash_json(SegmentList), "config": hash_json(refine 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/audio_pipeline/prompts/refine.jinja")})`。命中时直接返回 `RefinedTranscript`,不进入 stage。未命中且 `ctx.no_cache is False` 时进入 stage,扫描 `refined/*.json` 走断点续跑。`ctx.no_cache is True` 时跳过 manifest 命中并清空 `refined/*.json` 后重跑全部段。
 
 **错误处理**:
 - 单段 LLM JSON / schema 失败:`complete_json` 内 1 次修复重试覆盖;耗尽抛 `LLMError`,整个 refine 中止(已完成段保留落盘,下次重跑接续)
@@ -241,7 +241,7 @@ LLM 输出的 `cross_refs` 必须满足:
 
 本管线相关的所有 dataclass 集中定义在 `core/schemas/audio.py`,通过 `core/schemas/__init__.py` re-export。任何模块**只能从 `core.schemas` 引用、不能在自己模块内重新定义副本**(`coding-standards.md` §2.2)。
 
-所有 dataclass `frozen=True`,**例外**:`RefinedTranscript` 在 stage 4 累积构建期间是可变的,构建完成后视为不可变。这一例外按 `coding-standards.md` §2.3 在 dataclass 的 docstring 中显式标注。
+所有 dataclass `frozen=True`。`RefinedTranscript` 也保持 `frozen=True`;stage 4 累积构建期间使用局部 `list[RefinedSegment]`,全部完成后一次性构造 `RefinedTranscript`。
 
 Schema 字段不携带配置元信息(见 `coding-standards.md` §2.4)。生成时的配置(target_count_hint、模板 hash 等)由 `StageOutput.metadata` 携带。
 
@@ -305,9 +305,8 @@ class RefinedSegment:
     summary: str                    # 1-3 句话摘要
     cross_refs: list[int]           # 引用的前置段 id,严格满足 all(ref < self.id)
 
-@dataclass
+@dataclass(frozen=True)
 class RefinedTranscript:
-    """累积构建期间可变;构建完成后视为不可变(不再修改字段)。"""
     segments: list[RefinedSegment]
     language: str
     duration: float
@@ -443,7 +442,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 `PipelineContext` 定义在 `core/context.py`,至少包含:
 - `ctx.source_path: Path`
-- `ctx.config: Config`
+- `ctx.config: AppConfig`
 - `ctx.paths: PipelinePaths`
 - `ctx.artifacts: ArtifactBundle`
 - `ctx.input_hash: str`

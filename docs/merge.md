@@ -47,14 +47,14 @@ refine 阶段把跨段引用产出为 `[[REF:N]]` marker，section LLM **不**�
 
 assemble 阶段做纯逻辑替换：
 
-- `[[REF:N]]` → `[§N](#chapter-anchor)`（查 `block_id → chapter_id → anchor`）
+- `[[REF:N]]` → `[§{N+1}](#chapter-anchor)`（查 `block_id → chapter_id → anchor`;显示编号使用 1-based）
 - `[[TS:123.456]]` → 按 `merge.assemble.timestamp_format` 渲染为可读形态，再按 `merge.assemble.video_url_template` 决定是否包成跳转链接
 
 用 `[[TAG:...]]` 而非让 LLM 直接输出 `[01:23](url?t=83)` 的好处：LLM 不擅长精确生成 URL，时间戳精度可以无损穿过 LLM，assemble 纯逻辑可单测、错误可定位，且 marker 不是 LLM 会自然生成的形态。
 
 ### 2.5 section 并发 + per-chapter cache + 断点续跑
 
-每章独立 LLM 调用，并发数由 `merge.section.concurrent_calls` 控制。**缓存粒度是 per-chapter**（不是 stage 级）：改某章 prompt 或上游 ContentBlock，只该章失效。已存在 `sections/{chapter_id:03d}.md` 跳过，`chapter_id` 从 1 开始，例如第一章为 `sections/001.md`。
+每章独立 LLM 调用，并发数由 `merge.section.concurrent_calls` 控制。**缓存粒度是 per-chapter**（不是 stage 级）：改某章 prompt 或上游 ContentBlock，只该章失效。manifest 命中的章节跳过，`chapter_id` 从 1 开始，例如第一章为 `sections/001.md`。
 
 这与 `audio-pipeline.md` §3.4 refine 的 stage 级缓存不同：refine 段间有强依赖（前段产物作为后段 prompt 一部分），所以以 stage 为缓存单元；section 章节之间相对独立（仅共享 outline 全局摘要作为 context），适合 per-chapter 缓存。
 
@@ -82,7 +82,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：
 - `ctx.artifacts.audio.get_refined()` → `RefinedTranscript`
-- `ctx.artifacts.visual.get_segments()` 与 `ctx.artifacts.visual.get_descriptions()`（多模模式时；纯音频模式 `ctx.artifacts.visual is None`）
+- `ctx.artifacts.visual.get_descriptions()`（多模模式时；纯音频模式 `ctx.artifacts.visual is None`）
 
 **Output**：`list[ContentBlock]`（schema 见 §4）。落盘 `cache/{input_hash}/content_blocks.json`。
 
@@ -92,22 +92,23 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 *VisualSlot 挂入规则*（多模模式）：
 
-对每对 `(audio_segment, visual_segment)`：
+`VisualDescription` 已经由 describe stage 从 `VisualSelection` 复制了代表帧、时间区间、medium 与 meaningful 过滤后的结果,是 merge 阶段消费视觉信息的完整产物。unify 不读取 `get_selections()`。
 
-1. 若 visual 段被多模 judge 阶段判为 `is_meaningful=False`（select 阶段已丢弃代表帧）→ 跳过
-2. 若 `[audio.start, audio.end]` 与 `[visual.start, visual.end]` 不相交 → 跳过
+对每对 `(audio_segment, visual_description)`：
+
+1. 若 `[audio.start, audio.end]` 与 `[visual.start, visual.end]` 不相交 → 跳过
 3. 否则在该 audio 段对应的 ContentBlock 上创建一个 `VisualSlot`：
-   - `slot.start = max(audio.start, visual.start)`
-   - `slot.end = min(audio.end, visual.end)`
-   - `slot.image_source_path` / `slot.description` / `slot.medium` / `slot.visual_segment_id` 从 visual 产物复制
+   - `slot.start = max(audio.start, visual_description.start)`
+   - `slot.end = min(audio.end, visual_description.end)`
+   - `slot.image_source_path` / `slot.description` / `slot.medium` / `slot.visual_segment_id` 从 `VisualDescription` 复制
 
-跨越多个 audio 段的 visual 段会在每个被跨越的 ContentBlock 内各挂一个 VisualSlot（指向同一张 frame 和同一段 description，但时间区间各自 clip）。一个 audio 段内的多个 visual segment 全部挂上，按时间排序。
+跨越多个 audio 段的 visual description 会在每个被跨越的 ContentBlock 内各挂一个 VisualSlot（指向同一张 frame 和同一段 description，但时间区间各自 clip）。一个 audio 段内的多个 visual description 全部挂上，按时间排序。
 
 *纯音频模式*：直接走以 audio 为骨架那条路径，`visuals=[]` 即可。
 
 **配置项**：无。
 
-**缓存键**：`hash(RefinedTranscript) + hash(VisualArtifacts 概要) + "unify"`。`VisualArtifacts 概要` 在多模模式下是 visual segments 与 descriptions 的内容 hash；纯音频模式下是固定标记 `"audio_only"`。
+**缓存键**：调用 `build_cache_key("unify", {"refined": hash_json(RefinedTranscript), "visual": visual_hash})`。`visual_hash` 在多模模式下是 descriptions 的内容 hash；纯音频模式下是固定标记 `"audio_only"`。
 
 **错误处理**：
 - ContentBlock 不变量校验（见 §4 不变量）违反 → `AssertionError`（属内部 bug，不 catch）
@@ -123,7 +124,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **实现要点**：
 - **单次 LLM 调用，不分块**。即使章节数 100+，summary 总量也远小于全文转录
-- **短输出原则**：LLM 输出 JSON 数组，每元素含 `id / title / summary / block_id_start / block_id_end`；不复述章节正文
+- **短输出原则**：LLM 输出 `Outline` JSON object,形如 `{"chapters": [...]}`；每个 chapter 含 `id / title / summary / block_id_start / block_id_end`；不复述章节正文
 - 用包内模板 `lvnotes/merge/prompts/outline.jinja` 渲染。模板内容：任务说明 + 目标章节数 hint + 所有 ContentBlock 的 `(id, topic, summary)` 列表（按 id 序）
 - 通过 `client = for_task(ctx.config, "outline")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper（同 segment / refine）
 - 输出 JSON 的解析与校验：
@@ -137,7 +138,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 **配置项**（`merge.outline.*`）：
 - `target_chapter_count_hint: str` —— 例如 `"5-12"`，作为 prompt 中的目标章节数提示，非硬约束
 
-**缓存键**：`hash(content_blocks.json) + hash(outline 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/merge/prompts/outline.jinja") + "outline"`。模板 hash 经 `core/cache.py` 的 `hash_prompt_template()` 归一化后再计算，避免注释 / 缩进微调触发重跑。
+**缓存键**：调用 `build_cache_key("outline", {"blocks": hash_file(ctx.paths.content_blocks_json), "config": hash_json(outline 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/merge/prompts/outline.jinja")})`。模板 hash 经 `core/cache.py` 的 `hash_prompt_template()` 归一化后再计算，避免注释 / 缩进微调触发重跑。
 
 **错误处理**：
 - LLM JSON 解析失败：1 次重试后上抛 `LLMError`
@@ -177,12 +178,14 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 具体相对路径由 `core/paths.py` 提供（不在 section 阶段拼路径）。纯音频模式下 `visuals=[]`,不会插入图片。图片 markdown 中**不要**嵌入时间戳；时间戳由独立的 `[[TS:...]]` marker 表达。
 
-*per-chapter 缓存与断点续跑*：每章 LLM 调用前先查该章 cache，命中则跳过。每完成一章就落盘 `sections/{chapter_id:03d}.md`，`chapter_id` 从 1 开始。某章失败时其他章已完成的不丢，整个 stage 重跑时跳过已存在的章。
+*per-chapter 缓存与断点续跑*：每章 LLM 调用前先查该章 cache manifest，manifest 命中则跳过。每完成一章就落盘 `sections/{chapter_id:03d}.md` 并写入 `sections/{chapter_id:03d}.md.cache.json`，`chapter_id` 从 1 开始。某章失败时其他章已完成的不丢，整个 stage 重跑时只跳过 manifest 命中的章。只存在 markdown 文件但 manifest 缺失或 cache key 不匹配时必须重新生成该章。
+
+`ctx.no_cache is True` 时跳过所有 per-chapter manifest 命中判断,重新生成所有章节并覆盖 `sections/{chapter_id:03d}.md`。用户手工编辑 sections 后只想重新合成最终笔记时应运行 `assemble --no-cache`,不要运行 `section --no-cache`。
 
 **配置项**（`merge.section.*`）：
 - `concurrent_calls: int` —— 默认 5
 
-**缓存键**（per-chapter）：单章 cache 键 = `hash(本章 ContentBlocks) + hash(Outline) + hash(section 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/merge/prompts/section.jinja") + "section_chapter_{chapter_id}"`。模板 hash 走 `core/cache.py` 的 `hash_prompt_template()`（归一化后再 hash），避免注释 / 缩进微调触发全部章重跑。
+**缓存键**（per-chapter）：单章 cache 键调用 `build_cache_key(f"section_chapter_{chapter_id:03d}", {"chapter_blocks": hash_json(本章 ContentBlocks), "outline": hash_json(Outline), "config": hash_json(section 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/merge/prompts/section.jinja")})`。`stage_name` 是格式化后的字符串,例如 `section_chapter_001`。模板 hash 走 `core/cache.py` 的 `hash_prompt_template()`（归一化后再 hash），避免注释 / 缩进微调触发全部章重跑。每章 manifest 写入 `sections/{chapter_id:03d}.md.cache.json`。
 
 注意：因为 prompt 含全 outline 摘要，所以 outline 变了所有章 cache 都失效。这是符合期望的——章节摘要变了每章正文都需要重写以保持上下文一致。
 
@@ -215,8 +218,8 @@ Anchor 不持久化在 `Chapter` schema 内（见 §4 注），由 assemble 在�
 1. 构建 `block_id → chapter_id` 映射：扫描所有 chapter，按 `[block_id_start, block_id_end]` 闭区间填表
 2. 构建 `chapter_id → anchor` 映射（调 `make_chapter_anchor`）
 3. 对每个 sections markdown 内容，扫描所有 `[[REF:(\d+)]]` marker：
-   - 解析 N（block_id）→ 查 `block_id → chapter_id` → 查 `chapter_id → anchor` → 替换为 `[§N](#anchor)`
-   - 找不到对应（理论上 refine 阶段已校验、不该发生）→ 替换为纯文本 `§N` + 记 `WARNING` 日志（`assemble: cross_ref §N not resolvable, rendered as plain text`），不阻塞
+   - 解析 N（0-based block_id）→ 查 `block_id → chapter_id` → 查 `chapter_id → anchor` → 替换为 `[§{N+1}](#anchor)`
+   - 找不到对应（理论上 refine 阶段已校验、不该发生）→ 替换为纯文本 `§{N+1}` + 记 `WARNING` 日志（`assemble: cross_ref §{N+1} not resolvable, rendered as plain text`），不阻塞
 
 *时间戳跳转链接*：
 
@@ -249,13 +252,21 @@ Template 支持的占位符：
 
 *文件结构*：
 
+frontmatter 中的 `mode` 来自 `PipelineContext` 中由 CLI 构造的本次运行模式,只能是 `audio_only` 或 `multimodal`。它不来自配置文件,也不由 assemble 根据 visual 产物是否存在自行推断。
+
 ```markdown
 ---
 source_path: <输入文件原始路径>
 duration: <hh:mm:ss>
 generated_at: <UTC ISO-8601>
 mode: audio_only | multimodal
-llm_profile: <profile name>
+llm_profiles:
+  segment: <profile name>
+  refine: <profile name>
+  outline: <profile name>
+  section: <profile name>
+  slide_judge: <profile name or null>
+  slide_describe: <profile name or null>
 ---
 
 # <顶级标题，从输入文件名派生或可配置>
@@ -272,6 +283,7 @@ llm_profile: <profile name>
 ```
 
 YAML frontmatter 包含元信息，VSCode/Obsidian/Jekyll 等 markdown 工具通用。
+`llm_profiles` 记录本次配置中各 LLM task 映射到的 profile name。纯音频模式下 `slide_judge` / `slide_describe` 写 `null`。
 
 *目录*：
 
@@ -284,12 +296,12 @@ YAML frontmatter 包含元信息，VSCode/Obsidian/Jekyll 等 markdown 工具通
 - `video_url_template: str | None` —— 默认 `None`（时间戳保持纯文本）
 - `top_title: str | None` —— 默认 `None`，未配置时从输入文件名派生
 
-**缓存键**：`hash(Outline) + hash(content_blocks.json) + hash(所有 sections/*.md) + hash(assemble 配置) + "assemble"`。
+**缓存键**：调用 `build_cache_key("assemble", {"outline": hash_json(Outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": hash_json(所有 sections/*.md 的内容 hash 列表), "config": hash_json(assemble 配置)})`。
 
 **错误处理**：
-- cross_refs 引用不存在 → WARNING 日志 + 降级为纯文本 `§N`，不阻塞（见上）
+- cross_refs 引用不存在 → WARNING 日志 + 降级为 1-based 纯文本 `§{N+1}`，不阻塞（见上）
 - section 输出含 `[[TS:abc]]` 等格式异常的 marker → assemble 不解析，保留原文 + WARNING 日志
-- section 输出 `[[REF:N]]` 中 N 越界 → 见 cross_refs 链接化第 3 点，降级为纯文本 `§N`
+- section 输出 `[[REF:N]]` 中 N 越界 → 见 cross_refs 链接化第 3 点，降级为 1-based 纯文本 `§{N+1}`
 - video_url_template 含未支持的占位符 → 启动时配置校验失败（`ConfigError`），不进入运行
 - 写入 note.md 失败（IO 错误）→ 自然抛 `OSError`
 
@@ -310,7 +322,7 @@ class VisualSlot:
     medium: str                     # judge 阶段输出，"ppt" / "blackboard" / "code" / "demo" / "other"
     start: float                    # clip 到所属 ContentBlock 区间内的起点
     end: float                      # clip 到所属 ContentBlock 区间内的终点
-    visual_segment_id: int          # 对应的 visual_pipeline 段 id，便于回溯
+    visual_segment_id: int          # 对应的 VisualDescription.segment_id，便于回溯
 
 @dataclass(frozen=True)
 class ContentBlock:

@@ -306,7 +306,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 - `LLMClient.complete(messages, options=None) -> LLMTextResult`
 - `complete_text(client, messages, options) -> LLMTextResult`
-- `complete_json(client, messages, schema, options, max_repair_retries=1) -> dict`
+- `complete_json(client, messages, schema, options, max_repair_retries=1) -> JsonSchemaT`
 - 错误归一化:所有实现统一抛 `AuthError` / `RateLimitError` / `ContextLengthError` / `TransportError`,调用方只 catch 这些。
 
 ### 5.4 `asr/` —— ASR 抽象

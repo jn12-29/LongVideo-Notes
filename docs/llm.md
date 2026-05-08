@@ -41,7 +41,7 @@
 | 文件 | 职责 |
 |---|---|
 | `base.py` | 定义 `LLMClient` 抽象接口 |
-| `types.py` | 定义 message / result / profile / capability / options 等类型 |
+| `types.py` | 定义 message / result / content part / options 等调用类型;profile 配置类型归 `core/config.py` |
 | `openai_chat.py` | OpenAI Chat Completions 原生实现 |
 | `openai_responses.py` | OpenAI Responses API 实现 |
 | `anthropic_messages.py` | Anthropic Messages API 实现 |
@@ -76,8 +76,17 @@ def complete_json(
     schema: type[JsonSchemaT],
     options: LLMRequestOptions | None = None,
     max_repair_retries: int = 1,
-) -> dict: ...
+) -> JsonSchemaT: ...
 ```
+
+`schema` 支持两类输入:
+
+- `pydantic.BaseModel` 子类:用 pydantic 完成校验并返回 model 实例。
+- `dataclass` 类型:先解析 JSON object,再按 dataclass 字段递归构造实例;字段缺失、类型不匹配或多余字段均视为 schema 校验失败并触发 repair retry。
+
+stage 可以直接传 `core.schemas` 中的 dataclass,例如 `SegmentList`、`RefinedSegment`、`Outline`。不要求 stage 为 LLM 输出另建 pydantic schema 副本。
+
+`complete_json()` 不支持裸 `list[T]` 作为 schema。需要列表结果时必须定义 dataclass wrapper,例如 `SegmentList(markers=...)`、`Outline(chapters=...)`。LLM 输出顶层 JSON 必须与 wrapper 字段匹配,不能只返回裸数组。
 
 任务名是普通字符串。文档、配置和代码示例统一使用：`"segment"`、`"refine"`、`"outline"`、`"section"`、`"slide_judge"`、`"slide_describe"`。不要引入 enum。
 
@@ -87,11 +96,14 @@ stage 示例：
 from lvnotes.llm import complete_json, complete_text, for_task
 
 client = for_task(ctx.config, "segment")
-segments = complete_json(client, messages, SegmentListSchema, options)
+segments = complete_json(client, messages, SegmentList, options)
 
 client = for_task(ctx.config, "refine")
+refined_segment = complete_json(client, messages, RefinedSegment, options)
+
+client = for_task(ctx.config, "section")
 result = complete_text(client, messages, options)
-text = result.text
+section_markdown = result.text
 ```
 
 约束：
@@ -177,37 +189,22 @@ class LLMClient(Protocol):
         messages: list[LLMMessage],
         options: LLMRequestOptions | None = None,
     ) -> LLMTextResult: ...
-
-    def stream(
-        self,
-        messages: list[LLMMessage],
-        options: LLMRequestOptions | None = None,
-    ) -> Iterator[str]: ...
 ```
 
 要求：
 
 - `complete()` 返回 `LLMTextResult`，不返回 SDK 原生对象。
-- `stream()` 返回文本增量 iterator；provider 支持 `streaming` capability 时必须真实可用。
+- 第一版不实现 streaming。`streaming` capability 仅保留为 profile 能力标记,不进入 `LLMClient` 稳定接口。
 - 协议实现内部完成错误归一化。
 - `base.py` 不 import 第三方 SDK。
 
 ### 4.2 `types.py`
 
+`LLMProfile` 配置类型定义在 `core/config.py`,不是 `llm/types.py`。`llm/types.py` 只定义请求、响应和调用选项类型。
+
 建议类型：
 
 ```python
-@dataclass(frozen=True)
-class LLMProfile:
-    name: str
-    provider: str
-    base_url: str | None
-    api_key_env: str
-    model: str
-    capabilities: frozenset[str]
-    max_context: int | None = None
-    timeout_seconds: float | None = None
-
 @dataclass(frozen=True)
 class TextPart:
     text: str
@@ -249,6 +246,7 @@ class LLMRequestOptions:
 约束：
 
 - `LLMProfile.provider` 必须是 `openai_chat`、`openai_responses`、`anthropic_messages`、`openai_compatible_chat` 之一。
+- `LLMProfile` 从 `core.config` import,不得在 `llm/types.py` 重复定义。
 - `LLMMessage.content` 用 part 列表，统一承载文本和图片。
 - `role` 保持字符串，provider 实现负责映射不同 API 的 role 差异。
 - capabilities 使用字符串集合，允许的当前值为 `vision`、`prompt_cache`、`json_mode`、`streaming`、`reasoning`。
@@ -302,7 +300,7 @@ tasks:
 |---|---|
 | `provider` | provider 类型，必须是四种受支持值之一 |
 | `base_url` | endpoint URL；provider 有默认官方 endpoint 时仍建议显式配置 |
-| `api_key_env` | API key 所在环境变量名 |
+| `api_key_env` | API key 所在环境变量名;本地 `openai_compatible_chat` endpoint 可为 `null` |
 | `model` | 传给 endpoint 的模型名 |
 | `capabilities` | profile 支持的能力列表 |
 | `max_context` | 最大上下文 token 数，可空 |
@@ -312,14 +310,16 @@ tasks:
 
 ### 5.1 `api_key_env` 规则
 
-`api_key_env` 是环境变量名，不是 API key 明文。
+`api_key_env` 是环境变量名，不是 API key 明文。公网 endpoint 通常必须配置;本地 `openai_compatible_chat` endpoint 可设为 `null`。
 
 规则：
 
-- `api_key_env` 必须是非空字符串。
+- `api_key_env` 为字符串时必须非空。
 - 配置文件中不得出现真实 API key。
 - client 创建时读取 `os.environ[api_key_env]`。
-- 环境变量不存在或值为空字符串时，必须抛 `AuthError`。
+- `api_key_env` 为字符串且环境变量不存在或值为空字符串时，必须抛 `AuthError`。
+- `api_key_env is None` 只允许用于 `provider="openai_compatible_chat"` 且 `base_url` 指向本地 endpoint。实现按无认证方式创建 client。
+- 非本地 endpoint 的 `api_key_env is None` 必须抛 `ConfigError`。
 - 错误信息必须包含 profile name 与 env var 名，例如：`LLM profile 'gpt_main' requires env var OPENAI_API_KEY`。
 - 错误信息不得包含 API key 值、token 片段或 Authorization header。
 - 同一个 `api_key_env` 可被多个 profile 复用。
@@ -399,19 +399,19 @@ def complete_json(
     schema: type[JsonSchemaT],
     options: LLMRequestOptions | None = None,
     max_repair_retries: int = 1,
-) -> dict: ...
+) -> JsonSchemaT: ...
 ```
 
 流程：
 
-1. 构造 `options_with_json_mode`，尽量启用 `json_mode`。
+1. 构造 `options_with_json_mode`。profile 有 `json_mode` capability 时启用 `json_mode`;没有该 capability 时不启用 SDK JSON mode,仅依赖 prompt 要求模型输出 JSON。
 2. 调用 `complete_text(client, messages, options_with_json_mode)`。
 3. 从 `LLMTextResult.text` 解析 JSON。
 4. 用 `schema` 做 schema 校验。
 5. 如果解析或 schema 校验失败，构造 repair prompt。
 6. 最多重试 `max_repair_retries` 次，默认 1。
 7. repair 仍失败则抛 `LLMError`。
-8. 返回校验后的 `dict`。
+8. 返回校验后的 schema 实例。
 
 JSON 解析顺序：
 
@@ -420,6 +420,8 @@ JSON 解析顺序：
 3. 如果仍失败，触发 repair retry。
 
 不做复杂启发式本地修复，例如自动补括号、替换引号、删除尾逗号。
+
+`complete_json()` 不要求 profile 必须具备 `json_mode` capability。缺少该 capability 时不得抛 capability 错误,应走 prompt-only JSON 输出 + parse + repair retry 流程。
 
 repair prompt 用英文，目标是只修 JSON，不重新完成业务任务：
 
@@ -508,7 +510,7 @@ stage 可依赖：
 - `get_client(config, profile_name) -> LLMClient`
 - `for_task(config, task_name) -> LLMClient`
 - `complete_text(client, messages, options) -> LLMTextResult`
-- `complete_json(client, messages, schema, options, max_repair_retries=1) -> dict`
+- `complete_json(client, messages, schema, options, max_repair_retries=1) -> JsonSchemaT`
 - `LLMTextResult.text`
 - `LLMTextResult.usage`
 - 统一异常类型
@@ -591,7 +593,7 @@ Import 规则：
 
 1. 四种 provider profile 都可通过 `get_client(config, profile_name)` 创建对应 client。
 2. `for_task(config, "segment")`、`for_task(config, "refine")`、`for_task(config, "outline")`、`for_task(config, "section")`、`for_task(config, "slide_judge")`、`for_task(config, "slide_describe")` 能按 `tasks.*` 返回 client。
-3. `api_key_env` 缺失或对应环境变量为空时抛 `AuthError`，错误信息包含 profile name 和 env var 名但不包含 key 值。
+3. 需要认证的 profile 在 `api_key_env` 缺失或对应环境变量为空时抛 `AuthError`，错误信息包含 profile name 和 env var 名但不包含 key 值。
 4. 未知 provider 抛 `ConfigError`。
 5. `complete_text()` 返回 `LLMTextResult`。
 6. `complete_json()` 能解析合法 JSON。

@@ -72,11 +72,13 @@ Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifac
 - 走 `media/video.py` 的抽帧函数，禁止直接 `subprocess.run`
 - 输入是音频文件或未显式传 `--mm` 时本 stage 不运行;视频输入显式传 `--mm` 时由 CLI 调度层启动多模管线
 - 帧文件命名必须稳定，包含时间戳或帧序号，便于断点续跑与人工检查
+- `SampledFrame.timestamp` 来自 `media.video.extract_frames()` 返回的 `ExtractedFrame.timestamp`,sample stage 不自行重新推导时间戳
+- sample stage 负责把 `ExtractedFrame.path` 转换为相对 `ctx.paths.visual_frames_dir` 的 `SampledFrame.image_source_path`
 
 **配置项**（`visual_pipeline.sample.*`）：
 - `fps: float` —— 默认 1
 
-**缓存键**：`hash(input_file_bytes) + hash(sample 配置) + "visual_sample"`。
+**缓存键**：调用 `build_cache_key("visual_sample", {"input": hash_file(ctx.source_path), "config": hash_json(sample 配置)})`。
 
 **错误处理**：
 - ffmpeg 调用失败：`media/` 包装为 `MediaError` 上抛
@@ -99,7 +101,7 @@ Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifac
 - `phash_low_threshold: int`
 - `phash_high_threshold: int`
 
-**缓存键**：`hash(VisualSampleIndex) + hash(cluster 配置) + "visual_cluster"`。
+**缓存键**：调用 `build_cache_key("visual_cluster", {"samples": hash_json(VisualSampleIndex), "config": hash_json(cluster 配置)})`。
 
 **错误处理**：不变量违反（时间倒序、空视觉段）→ `AssertionError`。
 
@@ -109,16 +111,17 @@ Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifac
 
 **Input**：`VisualSegmentList` + 每段首 / 中 / 末帧。
 
-**Output**：`list[VisualJudgement]`，落盘 `cache/{input_hash}/visual/judgements.json`。
+**Output**：`VisualJudgementList`，落盘 `cache/{input_hash}/visual/judgements.json`。
 
 **实现要点**：
 - 每段最多传首 / 中 / 末三帧给弱 VLM
 - 输出 `medium`、`is_meaningful`、`evolution`、`richest_frame_id`
+- `richest_frame_id` 必须是 `SampledFrame.id` 全局 namespace 内的 id,不是视觉段内候选帧序号
 - 通过 `client = for_task(ctx.config, "slide_judge")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper
 
 **配置项**：使用 `tasks.slide_judge` 映射到的 LLM profile。
 
-**缓存键**：`hash(VisualSegmentList) + hash(judge 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/visual_pipeline/prompts/judge.jinja") + "visual_judge"`。
+**缓存键**：调用 `build_cache_key("visual_judge", {"segments": hash_json(VisualSegmentList), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/visual_pipeline/prompts/judge.jinja")})`。
 
 **错误处理**：LLM 输出违反 schema 或业务不变量 → `LLMError`。
 
@@ -126,18 +129,19 @@ Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifac
 
 **职责**：为每个有意义视觉段选择 1 张代表帧。
 
-**Input**：`list[VisualJudgement]` + 采样帧。
+**Input**：`VisualSegmentList` + `VisualJudgementList` + `VisualSampleIndex`。
 
 **Output**：`list[VisualSelection]`，落盘 `cache/{input_hash}/visual/selections.json`。
 
 **实现要点**：
 - `is_meaningful=False` 的段不产出代表帧
-- 优先使用 judge 给出的 `richest_frame_id`
+- 优先使用 judge 给出的 `richest_frame_id`,该 id 必须对应 `SampledFrame.id` 且属于当前 `VisualSegment.frame_ids`
 - 必要时用拉普拉斯方差在候选帧中选择更清晰的一张
+- `VisualSelection.start/end` 从对应 `VisualSegment.start/end` 复制
 
 **配置项**：第一版可无。
 
-**缓存键**：`hash(list[VisualJudgement]) + hash(select 配置) + "visual_select"`。
+**缓存键**：调用 `build_cache_key("visual_select", {"segments": hash_json(VisualSegmentList), "judgements": hash_json(VisualJudgementList), "samples": hash_json(VisualSampleIndex), "config": hash_json(select 配置)})`。
 
 **错误处理**：代表帧路径不存在 → `CacheError`。
 
@@ -147,17 +151,18 @@ Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifac
 
 **Input**：`list[VisualSelection]` + `ctx.artifacts.audio.get_text_at(start, end, strip_refs=True)`。
 
-**Output**：`list[VisualDescription]`，落盘 `cache/{input_hash}/visual/descriptions.json`。
+**Output**：`VisualDescriptionList`，落盘 `cache/{input_hash}/visual/descriptions.json`。
 
 **实现要点**：
 - 启动前由 CLI 调度层保证 `AudioArtifacts.is_complete() == True`
 - 对每个代表帧，取视觉段时间区间对应的讲解文本作为 VLM 文本上下文
 - 不直接读取 `refined_transcript.json`，只通过 `AudioArtifacts`
+- `VisualDescription.frame_id`、`image_source_path`、`start`、`end`、`medium` 从对应 `VisualSelection` 原样复制,再补充 VLM 生成的 `description`
 - 通过 `client = for_task(ctx.config, "slide_describe")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper
 
 **配置项**：使用 `tasks.slide_describe` 映射到的 LLM profile。
 
-**缓存键**：`hash(list[VisualSelection]) + hash(相关 AudioArtifacts 文本内容) + hash(describe 配置) + hash(LLM profile) + hash_prompt_template("lvnotes/visual_pipeline/prompts/describe.jinja") + "visual_describe"`。
+**缓存键**：调用 `build_cache_key("visual_describe", {"selections": hash_json(list[VisualSelection]), "audio_text": hash_json(相关 AudioArtifacts 文本内容), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/visual_pipeline/prompts/describe.jinja")})`。
 
 **错误处理**：音频产物未完成 → `CacheError`；VLM 失败 → `LLMError`。
 
@@ -199,7 +204,11 @@ class VisualJudgement:
     medium: str
     is_meaningful: bool
     evolution: str
-    richest_frame_id: int | None
+    richest_frame_id: int | None       # SampledFrame.id 全局 namespace 内的 id
+
+@dataclass(frozen=True)
+class VisualJudgementList:
+    judgements: list[VisualJudgement]
 
 @dataclass(frozen=True)
 class VisualSelection:
@@ -213,11 +222,16 @@ class VisualSelection:
 @dataclass(frozen=True)
 class VisualDescription:
     segment_id: int
+    frame_id: int
     image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
     start: float
     end: float
     medium: str
     description: str
+
+@dataclass(frozen=True)
+class VisualDescriptionList:
+    descriptions: list[VisualDescription]
 ```
 
 ### 不变量
@@ -227,6 +241,8 @@ class VisualDescription:
 3. 所有时间戳使用 `float` 秒数、精度毫秒
 4. `VisualJudgement.segment_id`、`VisualSelection.segment_id`、`VisualDescription.segment_id` 必须对应存在的 `VisualSegment.id`
 5. `VisualSelection.frame_id` 必须对应存在的 `SampledFrame.id`
+6. `VisualJudgement.richest_frame_id` 非空时必须对应存在的 `SampledFrame.id`,且属于对应 `VisualSegment.frame_ids`
+7. `VisualDescription.frame_id`、`image_source_path`、`start`、`end`、`medium` 必须从对应 `VisualSelection` 复制;`descriptions.json` 是 merge 阶段消费视觉信息的完整产物
 
 不变量违反 → `AssertionError`，不 catch、不自动修复。
 
@@ -242,9 +258,9 @@ class VisualArtifacts:
 
     def get_samples(self) -> VisualSampleIndex: ...
     def get_segments(self) -> VisualSegmentList: ...
-    def get_judgements(self) -> list[VisualJudgement]: ...
+    def get_judgements(self) -> VisualJudgementList: ...
     def get_selections(self) -> list[VisualSelection]: ...
-    def get_descriptions(self) -> list[VisualDescription]: ...
+    def get_descriptions(self) -> VisualDescriptionList: ...
     def is_complete(self) -> bool: ...
 ```
 

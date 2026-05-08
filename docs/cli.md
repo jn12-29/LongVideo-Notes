@@ -105,6 +105,7 @@ lvnotes run <input-file>
 lvnotes run <input-file> --mm
 lvnotes run <input-file> --config config.yaml
 lvnotes run <input-file> --no-cache
+lvnotes run <input-file> --debug
 ```
 
 默认纯音频行为:
@@ -151,6 +152,7 @@ lvnotes transcribe <input-file>
 lvnotes segment <input-file>
 lvnotes refine <input-file>
 lvnotes refine <input-file> --debug
+lvnotes refine <input-file> --no-cache
 ```
 
 | 命令 | 调用 stage | 依赖 |
@@ -167,6 +169,8 @@ lvnotes refine <input-file> --debug
 3. 允许用户审核或按约定编辑落盘 JSON
 4. 重新加载第一段产物
 5. 继续后续段
+
+`run --debug` 只影响端到端运行中的 refine stage,语义与 `lvnotes refine <input-file> --debug` 相同。其他 stage 忽略该开关。
 
 ### 3.4 多模 stage 子命令
 
@@ -192,9 +196,14 @@ lvnotes describe <input-file> --mm
 
 ```bash
 lvnotes unify <input-file>
+lvnotes unify <input-file> --mm
 lvnotes outline <input-file>
+lvnotes outline <input-file> --mm
 lvnotes section <input-file>
+lvnotes section <input-file> --mm
+lvnotes section <input-file> --no-cache
 lvnotes assemble <input-file>
+lvnotes assemble <input-file> --mm
 lvnotes assemble <input-file> --no-cache
 ```
 
@@ -204,6 +213,8 @@ lvnotes assemble <input-file> --no-cache
 | `outline` | `merge.outline.run(ctx)` | content blocks |
 | `section` | `merge.section.run(ctx)` | outline + content blocks |
 | `assemble` | `merge.assemble.run(ctx)` | outline + content blocks + sections |
+
+合并 stage 命令的 `--mm` 语义与 `run --mm` 一致:视频输入且显式传 `--mm` 时创建带 `VisualArtifacts` 的 context;未传 `--mm` 时按纯音频模式创建 context。音频输入传 `--mm` 仍报错。这样 assemble frontmatter 的 `mode` 始终来自本次 CLI 模式。
 
 `assemble --no-cache` 用于用户编辑 `sections/*.md` 后,跳过 assemble 缓存,重读 sections 并重新生成 `note.md`。不应重跑 section LLM。
 
@@ -247,6 +258,7 @@ mode: multimodal
 ```
 
 该值来自 CLI 本次运行模式,不来自配置文件。
+CLI 创建 `PipelineContext.mode`,值只能是 `"audio_only"` 或 `"multimodal"`;assemble frontmatter 直接使用该字段。
 
 ---
 
@@ -345,11 +357,15 @@ lvnotes assemble lecture.mp4 --no-cache
 | 命令 | `--no-cache` 影响 |
 |---|---|
 | `run --no-cache` | 对本次端到端涉及的 stage 跳过缓存读取 |
-| `refine --no-cache` | 跳过 refine stage 缓存,stage 内断点续跑规则按音频文档执行 |
+| `refine --no-cache` | 删除本次 refine cache manifest 对应的命中资格,清空 `refined/*.json` 后重跑全部段 |
 | `assemble --no-cache` | 跳过 assemble 缓存,重读 outline / blocks / sections |
 | `inspect --no-cache` | 不支持 |
 
 `--no-cache` 不等于删除整个 cache 目录。CLI 不自己计算业务缓存键。
+
+refine 的断点续跑只在 cache key 未变且没有 `--no-cache` 时使用已完成的 `refined/{seg_id:04d}.json`。cache key 变化或显式 `refine --no-cache` 时,旧分段产物不再可信,stage 必须清空 `refined/` 后从第一段重跑。
+
+section 的 `--no-cache` 语义与 per-chapter cache 一致:跳过每章 manifest 命中判断,重新生成所有章节并覆盖 `sections/{chapter_id:03d}.md`;用户只想基于手工编辑的 sections 重新合成时应运行 `assemble --no-cache`,不要运行 `section --no-cache`。
 
 ---
 
@@ -549,6 +565,7 @@ lvnotes transcribe lecture.mp4
 lvnotes segment lecture.mp4
 lvnotes refine lecture.mp4
 lvnotes refine lecture.mp4 --debug
+lvnotes refine lecture.mp4 --no-cache
 
 lvnotes sample lecture.mp4 --mm
 lvnotes cluster lecture.mp4 --mm
@@ -559,6 +576,7 @@ lvnotes describe lecture.mp4 --mm
 lvnotes unify lecture.mp4
 lvnotes outline lecture.mp4
 lvnotes section lecture.mp4
+lvnotes section lecture.mp4 --no-cache
 lvnotes assemble lecture.mp4
 lvnotes assemble lecture.mp4 --no-cache
 
