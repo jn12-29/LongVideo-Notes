@@ -32,13 +32,19 @@ lvnotes assemble --no-cache
 
 - `docs/overview.md` —— 项目级设计、模块边界、配置示例、实现优先级
 - `docs/coding-standards.md` —— 开发规范与 agent 写代码约束
+- `docs/core.md` —— core 框架层设计：schema、artifacts、paths、cache、config、context
+- `docs/media.md` —— ffmpeg / ffprobe 唯一入口设计
+- `docs/llm.md` —— LLM provider 抽象、profile、JSON helper、错误归一化
+- `docs/asr.md` —— ASR 抽象与 faster-whisper 本地实现设计
 - `docs/audio-pipeline.md` —— 音频管线详细设计
 - `docs/visual-pipeline.md` —— 多模管线详细设计（第一版可仅占位实现）
 - `docs/merge.md` —— 合并阶段与最终 Markdown 生成设计
+- `docs/cli.md` —— CLI 命令、模式规则、调度与缓存控制设计
 
 ## 当前状态
 
 - 已完成项目级设计文档
+- 已完成 core / media / llm / asr / cli 模块设计文档
 - 已完成音频管线设计文档
 - 已完成合并阶段设计文档
 - 已完成多模管线设计文档（第一版可仅占位实现）

@@ -48,7 +48,7 @@ refine 阶段把跨段引用产出为 `[[REF:N]]` marker，section LLM **不**�
 assemble 阶段做纯逻辑替换：
 
 - `[[REF:N]]` → `[§N](#chapter-anchor)`（查 `block_id → chapter_id → anchor`）
-- `[[TS:123.456]]` → 按 `merge.section.timestamp_format` 渲染为可读形态，再按 `merge.assemble.video_url_template` 决定是否包成跳转链接
+- `[[TS:123.456]]` → 按 `merge.assemble.timestamp_format` 渲染为可读形态，再按 `merge.assemble.video_url_template` 决定是否包成跳转链接
 
 用 `[[TAG:...]]` 而非让 LLM 直接输出 `[01:23](url?t=83)` 的好处：LLM 不擅长精确生成 URL，时间戳精度可以无损穿过 LLM，assemble 纯逻辑可单测、错误可定位，且 marker 不是 LLM 会自然生成的形态。
 
@@ -166,20 +166,18 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 渲染形态（可读时间戳格式 / 是否生成跳转链接 / URL template）全部由 assemble 阶段按配置决定，本 stage 不感知。
 
-*视觉内容渲染*：visuals 列表中每个 VisualSlot 在该 block 对应位置插入 markdown 图片引用：
+*视觉内容渲染*：多模模式下,visuals 列表中每个 VisualSlot 在该 block 对应位置插入 markdown 图片引用：
 
 ```markdown
 ![visual description](relative/path/to/frame.png)
 ```
 
-具体相对路径由 `core/paths.py` 提供（不在 section 阶段拼路径）。是否插入图片由 `merge.section.include_visuals` 控制（默认 true）。图片 markdown 中**不要**嵌入时间戳；时间戳由独立的 `[[TS:...]]` marker 表达。
+具体相对路径由 `core/paths.py` 提供（不在 section 阶段拼路径）。纯音频模式下 `visuals=[]`,不会插入图片。图片 markdown 中**不要**嵌入时间戳；时间戳由独立的 `[[TS:...]]` marker 表达。
 
 *per-chapter 缓存与断点续跑*：每章 LLM 调用前先查该章 cache，命中则跳过。每完成一章就落盘 `sections/{chapter_id:03d}.md`。某章失败时其他章已完成的不丢，整个 stage 重跑时跳过已存在的章。
 
 **配置项**（`merge.section.*`）：
 - `concurrent_calls: int` —— 默认 5
-- `timestamp_format: str` —— 默认 `"[{hms}]"`，支持的占位符：`{hms}`（hh:mm:ss）、`{mmss}`（mm:ss）、`{seconds}`（小数秒）、`{seconds_int}`（整数秒）
-- `include_visuals: bool` —— 默认 true
 
 **缓存键**（per-chapter）：单章 cache 键 = `hash(本章 ContentBlocks) + hash(Outline) + hash(section 配置) + hash(LLM profile) + hash_prompt_template("prompts/section.jinja") + "section_chapter_{id}"`。模板 hash 走 `core/cache.py` 的 `hash_prompt_template()`（归一化后再 hash），避免注释 / 缩进微调触发全部章重跑。
 
@@ -221,7 +219,7 @@ Anchor 不持久化在 `Chapter` schema 内（见 §4 注），由 assemble 在�
 
 assemble 阶段扫描所有 `[[TS:(\d+\.\d+)]]` marker，按以下两步替换：
 
-1. **格式化为可读时间戳**：按 `merge.section.timestamp_format`（支持 `{hms}` / `{mmss}` / `{seconds}` / `{seconds_int}` 占位符）生成可读字符串，如 `[01:23:45]`。所有格式化经 `core/timestamps.py`。
+1. **格式化为可读时间戳**：按 `merge.assemble.timestamp_format`（支持 `{hms}` / `{mmss}` / `{seconds}` / `{seconds_int}` 占位符）生成可读字符串，如 `[01:23:45]`。所有格式化经 `core/timestamps.py`。
 2. **包跳转链接（可选）**：按 `merge.assemble.video_url_template` 生成 URL：
    - `video_url_template is None` → 保留可读字符串，不包链接
    - 否则 → 替换为 markdown 链接 `[<可读字符串>](<URL>)`
@@ -277,6 +275,7 @@ YAML frontmatter 包含元信息，VSCode/Obsidian/Jekyll 等 markdown 工具通
 由 `merge.assemble.include_toc` 控制（默认 true）。简单 markdown 目录：每章一行 `- [章节标题](#anchor)`。
 
 **配置项**（`merge.assemble.*`）：
+- `timestamp_format: str` —— 默认 `"[{hms}]"`，支持的占位符：`{hms}`（hh:mm:ss）、`{mmss}`（mm:ss）、`{seconds}`（小数秒）、`{seconds_int}`（整数秒）
 - `include_toc: bool` —— 默认 true
 - `include_metadata: bool` —— 默认 true（YAML frontmatter）
 - `video_url_template: str | None` —— 默认 `None`（时间戳保持纯文本）
@@ -456,7 +455,7 @@ lvnotes/merge/
 多模管线全部 stage 完成后：
 
 1. `unify` 升级支持 VisualSlot 挂入
-2. `section` 增加 `include_visuals` 分支与图片渲染
+2. `section` 增加图片渲染
 3. 端到端用真实视频（含 PPT 切换）跑通，验证 cross_refs 链接、时间戳跳转、目录、frontmatter
 
 ### 单 stage 验收标准

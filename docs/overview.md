@@ -40,7 +40,7 @@
 - **纯音频模式**:默认模式。只走音频管线,产出基于讲解内容的笔记。适用于音频文件、或视频但不需要画面信息的场景。
 - **多模模式**:显式传 `--mm` 时启用。音频管线 + 多模管线并行,画面和讲解联合生成笔记。适用于含 PPT / 板书 / 代码演示的教学视频。
 
-模式由 CLI 参数优先决定。输入是音频文件时强制纯音频模式;输入是视频文件时默认纯音频模式,显式传 `--mm` 才启用多模。配置中的 `visual_pipeline.enabled` 只作为多模能力开关:未传 `--mm` 时不会启动多模;传了 `--mm` 但该配置为 `false` 时直接报配置错误,避免用户以为已经启用画面处理。
+模式只由 CLI 参数决定。输入是音频文件时强制纯音频模式;输入是视频文件时默认纯音频模式,显式传 `--mm` 才启用多模。配置文件只提供各 stage 的参数,不提供额外的音频/多模启停开关,避免 `--mm` 与配置形成双源事实。
 
 ### 2.3 输出
 
@@ -231,6 +231,8 @@ longvideo-notes/
 
 **职责**:提供所有其他模块共用的基础设施。包括数据 schema、缓存机制、配置加载、日志、路径常量、时间戳工具、slug 工具、原子写入工具。
 
+详细契约见 `docs/core.md`。
+
 **原则**:
 
 - 不写业务。任何模块特定的逻辑都不应在 `core/` 出现。
@@ -250,6 +252,8 @@ longvideo-notes/
 
 **职责**:所有 ffmpeg / ffprobe 调用。
 
+详细契约见 `docs/media.md`。
+
 **原则**:
 
 - 全项目唯一允许 `subprocess` 调用 ffmpeg 的地方。其他模块需要 ffmpeg 操作时调用 `media/` 提供的函数。
@@ -258,6 +262,8 @@ longvideo-notes/
 ### 5.3 `llm/` —— LLM provider 抽象
 
 **职责**:统一所有 LLM 调用,屏蔽不同协议(OpenAI Chat / Responses / Anthropic Messages)和不同 endpoint 的差异。
+
+详细契约见 `docs/llm.md`。
 
 **原则**:
 
@@ -280,6 +286,8 @@ longvideo-notes/
 ### 5.4 `asr/` —— ASR 抽象
 
 **职责**:语音转录的统一接口。
+
+详细契约见 `docs/asr.md`。
 
 **原则**:
 
@@ -329,10 +337,13 @@ longvideo-notes/
 
 **职责**:CLI 命令解析、调度两条管线、错误处理、进度显示。
 
+详细契约见 `docs/cli.md`。
+
 **原则**:
 
 - 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes inspect`、以及顶层 stage 命令(如 `lvnotes extract`、`lvnotes transcribe`、`lvnotes outline`、`lvnotes assemble`)。
 - 调度结构按双管线设计。调度层可以并发执行音频管线和多模管线,但每个 stage 对外仍固定暴露同步 `run(ctx) -> StageOutput` 接口;多模管线 disabled 时直接跳过。
+- refine stage 的开发期审核能力通过 CLI 参数暴露,如 `lvnotes refine --debug`;该开关不进入配置文件。
 - 不在 CLI 写业务逻辑。CLI 只负责"解析参数 → 配置 Pipeline → 启动 → 处理输出"。
 
 ---
@@ -423,7 +434,6 @@ asr:
   language: zh
 
 audio_pipeline:
-  enabled: true
   extract:
     sample_rate: 16000 # 重采样目标,可选 8000/16000/22050/32000/44100/48000
     channels: 1 # 重采样目标,1 (mono) 或 2 (stereo)
@@ -432,12 +442,10 @@ audio_pipeline:
     min_segment_seconds: 30
     max_segment_seconds: 480
   refine:
-    review_first: false
     sliding_window_token_threshold: 30000
     sliding_window_recent_segments: 5
 
 visual_pipeline:
-  enabled: true # 多模能力开关;默认配置建议为 true,但只有显式传 --mm 才会实际启动
   sample:
     fps: 1
   cluster:
@@ -450,10 +458,9 @@ merge:
     target_chapter_count_hint: "5-12"
   section:
     concurrent_calls: 5
-    timestamp_format: "[{hms}]" # 渲染形态;支持 {hms} {mmss} {seconds} {seconds_int}
     # LLM 输出走内部 marker [[TS:seconds]],由 assemble 替换
-    include_visuals: true # 多模模式下章节内嵌入视觉描述与图片
   assemble:
+    timestamp_format: "[{hms}]" # 时间戳渲染形态;支持 {hms} {mmss} {seconds} {seconds_int}
     include_toc: true # 顶部目录
     include_metadata: true # YAML frontmatter(输入路径、时长、模式等)
     video_url_template: null # 默认时间戳为纯文本;配置后渲染为跳转链接
@@ -474,8 +481,13 @@ merge:
 ## 10. 文档索引
 
 - `docs/coding-standards.md` —— 开发规范、工程原则、针对 coding agent 的注意事项。**所有写代码前必读**。
+- `docs/core.md` —— core 框架层详细设计(schema、artifacts、paths、cache、config、context 等)。
+- `docs/media.md` —— ffmpeg / ffprobe 唯一入口详细设计。
+- `docs/llm.md` —— LLM provider 抽象、profile、JSON helper、错误归一化详细设计。
+- `docs/asr.md` —— ASR 抽象与 faster-whisper 本地实现详细设计。
 - `docs/audio-pipeline.md` —— 音频管线 4 个 stage 的详细设计与接口契约。
 - `docs/visual-pipeline.md` —— 多模管线 5 个 stage 的详细设计(第一版可仅占位)。
 - `docs/merge.md` —— 合并阶段的详细设计。
+- `docs/cli.md` —— CLI 命令、模式规则、调度与缓存控制详细设计。
 
 每份管线文档都按以下结构组织:Overview、Design Considerations(设计要点)、Stages(含每个 stage 的 input/output schema、实现要点、配置项、缓存规则、错误处理)、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。

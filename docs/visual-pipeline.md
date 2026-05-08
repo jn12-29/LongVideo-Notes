@@ -26,7 +26,7 @@
 
 ## 2. Design Considerations
 
-### 2.1 第一版默认关闭
+### 2.1 第一版可暂不实现
 
 多模能力不是音频端到端闭环的前置条件。第一阶段可以只实现音频管线和合并阶段，保留 `visual_pipeline/` 目录、配置项、`VisualArtifacts` 接口占位即可。
 
@@ -68,7 +68,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **实现要点**：
 - 走 `media/video.py` 的抽帧函数，禁止直接 `subprocess.run`
-- 输入是音频文件或未显式传 `--mm` 时本 stage 不运行;显式传 `--mm` 但 `visual_pipeline.enabled=false` 时由 CLI 配置校验阶段报错
+- 输入是音频文件或未显式传 `--mm` 时本 stage 不运行;视频输入显式传 `--mm` 时由 CLI 调度层启动多模管线
 - 帧文件命名必须稳定，包含时间戳或帧序号，便于断点续跑与人工检查
 
 **配置项**（`visual_pipeline.sample.*`）：

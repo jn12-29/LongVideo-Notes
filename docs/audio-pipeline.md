@@ -218,12 +218,11 @@ LLM 输出的 `cross_refs` 必须满足:
 
 校验失败触发该段重试。
 
-*review_first*:调试开关。第一段 refine 后暂停,把产物打印给用户审核 + 可手工编辑 → 重新加载到累积文本。第一版默认关,留作开发期调风格用。
+*debug*:这是开发期调试能力,不进入配置文件。CLI 实现 refine stage 时应预留 `--debug` 参数:第一段 refine 后暂停,把产物打印给用户审核 + 可手工编辑,再重新加载到累积文本继续后续段。默认关闭,仅显式传 CLI 参数时启用。
 
 *断点续跑*:每完成一段就 `atomic_write_json` 落盘 `refined/{seg_id:04d}.json`。stage 启动时扫描该目录,从未完成的最早一段继续。**这是 stage 内部的断点续跑,不是缓存机制**——stage 级缓存(见下"缓存键")一旦失效(如 prompt 模板改了),所有 `refined/*.json` 一并清空重跑。
 
 **配置项**(`audio_pipeline.refine.*`):
-- `review_first: bool` —— 默认 false
 - `sliding_window_token_threshold: int` —— 默认 30000
 - `sliding_window_recent_segments: int` —— 默认 5
 
