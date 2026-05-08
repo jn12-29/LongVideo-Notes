@@ -67,6 +67,62 @@ Agent prompts should state:
 - Whether the task is edit mode or read-only review mode.
 - The required final report format.
 
+## Mandatory Review-Fix Loop For Every Change
+
+Any task that modifies files must include an explicit review-fix loop. This applies to code, documentation, configuration, tests, scripts, prompts, examples, and generated project files. Do not treat review as an optional final polish step.
+
+Minimum loop for every modification:
+
+1. Inspect the relevant current files and authority documents before editing.
+2. Make the smallest correct change.
+3. Review the changed files against the user request and applicable project rules.
+4. Fix confirmed issues.
+5. Re-review the changed surface after the fix.
+6. Run the smallest relevant verification command or targeted search.
+7. Stop only when the latest review after the latest fix has no confirmed blockers.
+
+For trivial single-file edits, the review may be a local self-review, but it must still happen after the edit and after any fix.
+
+Use independent read-only reviewers when any of these apply:
+
+- The change touches more than one file.
+- The change affects behavior, not just wording.
+- The change affects CLI behavior, runtime flags, scheduling, cache semantics, paths, config/context fields, schemas, artifacts, serialization, public outputs, scripts, prompts, tests, or docs that define current behavior.
+- The first review finds a blocker.
+- The user explicitly asks for careful review or end-to-end completion.
+
+Use multiple independent read-only reviewers when any of these apply:
+
+- The change crosses module boundaries.
+- The change affects shared contracts or public behavior.
+- The change affects `core/`, CLI, cache/config/context, schemas, artifacts, serialization, pipeline boundaries, or user-facing outputs.
+- The change is large enough to require agents or parallel work.
+
+Loop rules:
+
+- Review must happen after implementation, not only before.
+- If review finds blockers, fix them and then re-review. Do not stop after the fix.
+- If a fix affects a shared contract, public behavior, or module boundary, re-run independent read-only review after the fix.
+- Tests, compile checks, CLI smoke tests, type checks, import checks, and targeted searches are verification. They do not replace review.
+- A subagent implementation report is not proof of correctness. The main agent must verify or request read-only review of the changed surface.
+- Do not summarize work as complete until the latest review after the latest fix reports no confirmed blockers and relevant verification passes.
+- Keep fixes surgical. Do not use review findings as an excuse for opportunistic refactoring.
+
+Required reporting for non-trivial modifications:
+
+- `Review round N: found X blockers.`
+- `Fix round N: fixed blockers A, B, C.`
+- `Verification round N: passed/failed commands ...`
+- `Re-review round N: no blockers / found new blockers ...`
+
+Final responses for modified files must include:
+
+- Number of review-fix rounds completed.
+- Blocking findings fixed.
+- Latest review result.
+- Verification commands and results.
+- Any non-blocking residual risks.
+
 ## Iterative Contract and Implementation Hardening
 
 Before starting multi-agent coding, treat documentation as an executable contract. During coding, treat the implementation as the executable form of that contract. The main agent must fork multiple independent read-only review agents for substantial contract or implementation changes; self-review alone is not enough because the main agent is biased by the current conversation, its own recent edits, and the assumptions it already accepted. Use this loop when preparing or changing cross-module work:
