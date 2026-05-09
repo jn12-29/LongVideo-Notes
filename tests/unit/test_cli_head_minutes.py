@@ -105,6 +105,7 @@ def _paths(tmp_path: Path, source_path: Path) -> SimpleNamespace:
         audio_dir=run_dir / "audio",
         visual_dir=run_dir / "visual",
         visual_frames_dir=run_dir / "visual" / "frames",
+        debug_dir=run_dir / "debug",
         refined_dir=run_dir / "refined",
         sections_dir=run_dir / "sections",
         output_note_md=tmp_path / "output" / "lecture-head-10m.md",

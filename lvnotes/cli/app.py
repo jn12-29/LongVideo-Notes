@@ -49,6 +49,26 @@ MERGE_STAGES: dict[str, StageRun] = {
     "assemble": assemble.run,
 }
 
+STAGE_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "extract": ("cache/{input_hash}/audio/audio.wav", "cache/{input_hash}/audio/extract.json"),
+    "transcribe": ("cache/{input_hash}/transcript_raw.json",),
+    "segment": ("cache/{input_hash}/segments.json",),
+    "refine": ("cache/{input_hash}/refined_transcript.json", "cache/{input_hash}/refined/{seg_id:04d}.json"),
+    "sample": ("cache/{input_hash}/visual/frames/", "cache/{input_hash}/visual/sample.json"),
+    "cluster": ("cache/{input_hash}/visual/segments.json",),
+    "judge": ("cache/{input_hash}/visual/judgements.json",),
+    "select": ("cache/{input_hash}/visual/selections.json",),
+    "describe": ("cache/{input_hash}/visual/descriptions.json",),
+    "unify": ("cache/{input_hash}/content_blocks.json",),
+    "outline": ("cache/{input_hash}/outline.json",),
+    "section": ("cache/{input_hash}/sections/{chapter_id:03d}.md",),
+    "assemble": (
+        "output_dir/<source-stem>.md",
+        "output_dir/<source-stem>-YYYYMMDD-HHMMSS.md",
+        "cache/{input_hash}/note.md",
+    ),
+}
+
 @click.group(cls=OrderedGroup)
 def main() -> None:
     """Generate structured Markdown notes from long video or audio.
@@ -76,6 +96,11 @@ def main() -> None:
       --debug           Enable refine review flow during refine.
       --paths           Print only the artifact path in inspect.
       --json            Print raw artifact content in inspect.
+
+    \b
+    Main outputs:
+      run writes the final Markdown note, a timestamped archive, and cache artifacts.
+      stage commands write their listed cache artifacts; inspect only reads existing artifacts.
     """
 
 
@@ -91,6 +116,19 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minut
 
     Use --mm for multimodal video runs. Use --head-minutes N for a quick trial
     on the first N minutes. Use --no-cache to recompute all stages run by run.
+
+    \b
+    Audio-only outputs:
+      cache/{input_hash}/audio/audio.wav and audio/extract.json
+      cache/{input_hash}/transcript_raw.json, segments.json, refined_transcript.json
+      cache/{input_hash}/content_blocks.json, outline.json, sections/{chapter_id:03d}.md
+      output_dir/<source-stem>.md and output_dir/<source-stem>-YYYYMMDD-HHMMSS.md
+      cache/{input_hash}/note.md
+
+    \b
+    Multimodal extras with --mm:
+      cache/{input_hash}/visual/frames/ and visual/sample.json
+      cache/{input_hash}/visual/segments.json, visual/judgements.json, visual/selections.json, visual/descriptions.json
     """
     ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False, head_minutes=head_minutes, create_trim=True)
     _echo_run_header(ctx)
@@ -122,6 +160,12 @@ def inspect_command(namespace: str, stage: str, input_file: Path, config_path: P
 
     Use --paths to print only the artifact path and --json to print raw artifact content.
     With --head-minutes N, inspect reads the existing first-N-minutes trim.
+
+    \b
+    Inspect does not generate files; it only reads existing artifacts:
+      audio: extract, transcript, segments, refined
+      visual: sample, cluster, judge, select, describe
+      merge: blocks, unify, outline, note, assemble
     """
     ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False, head_minutes=head_minutes, create_trim=False)
     path = _inspect_path(ctx, namespace, stage)
@@ -182,9 +226,16 @@ def _stage_short_help(stage_name: str, require_mm: bool) -> str:
 
 def _stage_help(stage_name: str, require_mm: bool) -> str:
     help_text = f"{_stage_short_help(stage_name, require_mm)} Supports --head-minutes N and --no-cache."
+    output_text = f"\b\n{_stage_output_help(stage_name)}"
     if require_mm:
-        return f"{help_text} Video input must be run with --mm."
-    return help_text
+        return f"{help_text} Video input must be run with --mm.\n\n{output_text}"
+    return f"{help_text}\n\n{output_text}"
+
+
+def _stage_output_help(stage_name: str) -> str:
+    lines = ["Produces:"]
+    lines.extend(f"  {path}" for path in STAGE_OUTPUTS[stage_name])
+    return "\n".join(lines)
 
 
 def _make_context(

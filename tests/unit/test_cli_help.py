@@ -1,4 +1,5 @@
 from click.testing import CliRunner
+import pytest
 
 from lvnotes.cli import app
 
@@ -29,6 +30,8 @@ def test_top_level_help_lists_common_options() -> None:
     assert "--paths" in result.output
     assert "--json" in result.output
     assert "Print raw artifact content in inspect." in result.output
+    assert "Main outputs:" in result.output
+    assert "timestamped archive" in result.output
 
 
 def test_top_level_help_lists_commands_with_short_help_in_workflow_order() -> None:
@@ -56,6 +59,19 @@ def test_run_help_mentions_common_run_options() -> None:
     assert "Use --no-cache to recompute all stages run by run." in result.output
 
 
+def test_run_help_lists_end_to_end_outputs() -> None:
+    result = CliRunner().invoke(app.main, ["run", "--help"])
+
+    assert result.exit_code == 0
+    assert "Audio-only outputs:" in result.output
+    assert "output_dir/<source-stem>.md" in result.output
+    assert "YYYYMMDD-HHMMSS.md" in result.output
+    assert "cache/{input_hash}/note.md" in result.output
+    assert "Multimodal extras with --mm:" in result.output
+    assert "cache/{input_hash}/visual/frames/" in result.output
+    assert "visual/descriptions.json" in result.output
+
+
 def test_inspect_help_mentions_path_json_and_head_minutes() -> None:
     result = CliRunner().invoke(app.main, ["inspect", "--help"])
 
@@ -69,6 +85,16 @@ def test_inspect_help_mentions_path_json_and_head_minutes() -> None:
     assert "--paths" in result.output
 
 
+def test_inspect_help_lists_readable_artifacts_without_generation() -> None:
+    result = CliRunner().invoke(app.main, ["inspect", "--help"])
+
+    assert result.exit_code == 0
+    assert "Inspect does not generate files" in result.output
+    assert "audio: extract, transcript, segments, refined" in result.output
+    assert "visual: sample, cluster, judge, select, describe" in result.output
+    assert "merge: blocks, unify, outline, note, assemble" in result.output
+
+
 def test_stage_help_mentions_head_minutes_and_no_cache() -> None:
     result = CliRunner().invoke(app.main, ["describe", "--help"])
 
@@ -76,3 +102,37 @@ def test_stage_help_mentions_head_minutes_and_no_cache() -> None:
     assert "Supports --head-minutes N" in result.output
     assert "--no-cache" in result.output
     assert "Video input must be run with --mm." in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_outputs"),
+    [
+        ("extract", ("cache/{input_hash}/audio/audio.wav", "cache/{input_hash}/audio/extract.json")),
+        ("transcribe", ("cache/{input_hash}/transcript_raw.json",)),
+        ("segment", ("cache/{input_hash}/segments.json",)),
+        ("refine", ("cache/{input_hash}/refined_transcript.json", "cache/{input_hash}/refined/{seg_id:04d}.json")),
+        ("sample", ("cache/{input_hash}/visual/frames/", "cache/{input_hash}/visual/sample.json")),
+        ("cluster", ("cache/{input_hash}/visual/segments.json",)),
+        ("judge", ("cache/{input_hash}/visual/judgements.json",)),
+        ("select", ("cache/{input_hash}/visual/selections.json",)),
+        ("describe", ("cache/{input_hash}/visual/descriptions.json",)),
+        ("unify", ("cache/{input_hash}/content_blocks.json",)),
+        ("outline", ("cache/{input_hash}/outline.json",)),
+        ("section", ("cache/{input_hash}/sections/{chapter_id:03d}.md",)),
+        (
+            "assemble",
+            (
+                "output_dir/<source-stem>.md",
+                "YYYYMMDD-HHMMSS.md",
+                "cache/{input_hash}/note.md",
+            ),
+        ),
+    ],
+)
+def test_stage_help_lists_produced_files(command: str, expected_outputs: tuple[str, ...]) -> None:
+    result = CliRunner().invoke(app.main, [command, "--help"])
+
+    assert result.exit_code == 0
+    assert "Produces:" in result.output
+    for expected in expected_outputs:
+        assert expected in result.output

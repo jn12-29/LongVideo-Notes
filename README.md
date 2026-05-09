@@ -29,6 +29,7 @@ lvnotes assemble <input-file> --no-cache
 
 默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
 `lvnotes --help` 会展示推荐命令、模式规则、常用选项和 stage 调试入口。
+各命令的 `--help` 会列出该命令会生成或读取的主要文件。
 传 `--head-minutes <minutes>` 时，CLI 会先在输入文件同目录生成或复用 `<stem>.head-<minutes>m<suffix>`，然后只处理该裁剪文件。
 运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。
 最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。

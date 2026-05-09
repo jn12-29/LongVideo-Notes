@@ -127,6 +127,8 @@ visual: sample  → cluster    → judge   → select ────┘
 
 `--head-minutes <minutes>` 会先在输入文件同目录生成或复用开头片段文件,再将该片段作为本次运行的输入。片段文件名为 `<source-stem>.head-<minutes>m<source-suffix>`,例如 `lecture.mp4 --head-minutes 10` 对应 `lecture.head-10m.mp4`。后续 `PipelineContext.source_path`、输入 hash、缓存目录、输出 Markdown 名称和所有 stage 输入都基于该片段文件。
 
+`run --help` 必须说明端到端主要产物:音频中间产物、合并中间产物、最终 latest Markdown、带时间戳归档 Markdown 与 cache debug copy。`run --help` 的多模说明还必须列出视觉帧目录与视觉 JSON 产物。
+
 ### 3.2 `lvnotes inspect`
 
 查看中间产物,不触发计算。
@@ -149,6 +151,8 @@ lvnotes inspect merge note <input-file> --head-minutes 10 --paths
 
 默认输出摘要,不打印长正文。
 
+`inspect --help` 必须明确 `inspect` 不生成文件,只读取已有 artifact,并列出可读取的 audio / visual / merge artifact 名称。
+
 ### 3.3 音频 stage 子命令
 
 ```bash
@@ -167,6 +171,15 @@ lvnotes refine <input-file> --no-cache
 | `transcribe` | `audio_pipeline.transcribe.run(ctx)` | extract 产物 |
 | `segment` | `audio_pipeline.segment.run(ctx)` | transcript 产物 |
 | `refine` | `audio_pipeline.refine.run(ctx)` | transcript + segments |
+
+音频 stage help 必须列出主要产物:
+
+| 命令 | 主要产物 |
+|---|---|
+| `extract` | `cache/{input_hash}/audio/audio.wav`, `cache/{input_hash}/audio/extract.json` |
+| `transcribe` | `cache/{input_hash}/transcript_raw.json` |
+| `segment` | `cache/{input_hash}/segments.json` |
+| `refine` | `cache/{input_hash}/refined_transcript.json`, `cache/{input_hash}/refined/{seg_id:04d}.json` |
 
 `refine --debug` 行为:
 
@@ -197,6 +210,16 @@ lvnotes describe <input-file> --mm
 | `select` | `visual_pipeline.select.run(ctx)` | judge 产物 |
 | `describe` | `visual_pipeline.describe.run(ctx)` | select 产物 + audio refined |
 
+多模 stage help 必须列出主要产物:
+
+| 命令 | 主要产物 |
+|---|---|
+| `sample` | `cache/{input_hash}/visual/frames/`, `cache/{input_hash}/visual/sample.json` |
+| `cluster` | `cache/{input_hash}/visual/segments.json` |
+| `judge` | `cache/{input_hash}/visual/judgements.json` |
+| `select` | `cache/{input_hash}/visual/selections.json` |
+| `describe` | `cache/{input_hash}/visual/descriptions.json` |
+
 多模 stage 命令必须要求 `--mm`,未传时明确拒绝执行。不能因为用户调用了 `describe` 就隐式启用多模。
 
 ### 3.5 合并 stage 子命令
@@ -221,6 +244,15 @@ lvnotes assemble <input-file> --no-cache
 | `outline` | `merge.outline.run(ctx)` | content blocks |
 | `section` | `merge.section.run(ctx)` | outline + content blocks |
 | `assemble` | `merge.assemble.run(ctx)` | outline + content blocks + sections |
+
+合并 stage help 必须列出主要产物:
+
+| 命令 | 主要产物 |
+|---|---|
+| `unify` | `cache/{input_hash}/content_blocks.json` |
+| `outline` | `cache/{input_hash}/outline.json` |
+| `section` | `cache/{input_hash}/sections/{chapter_id:03d}.md` |
+| `assemble` | `output_dir/<source-stem>.md`, `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md`, `cache/{input_hash}/note.md` |
 
 合并 stage 命令的 `--mm` 语义与 `run --mm` 一致:视频输入且显式传 `--mm` 时创建带 `VisualArtifacts` 的 context;未传 `--mm` 时按纯音频模式创建 context。音频输入传 `--mm` 仍报错。这样 assemble frontmatter 的 `mode` 始终来自本次 CLI 模式。
 
@@ -547,6 +579,7 @@ CLI 验收覆盖：
 - `python -m lvnotes --help` 与 `lvnotes --help` 入口一致。
 - 顶层 help 输出推荐工作流、模式规则、常用示例和常用选项。
 - 顶层 help 的 Commands 区按使用顺序展示 `run`、`inspect`、音频 stage、多模 stage、合并 stage,并为每个命令展示简短用途。
+- `run --help`、`inspect --help` 与每个 stage command 的 help 展示对应命令会生成或读取的主要产物。
 - `lvnotes run <input-file>` 走纯音频路径。
 - `lvnotes run <video> --mm` 走多模路径。
 - 每个 stage 命令调用同名 stage 的 `run(ctx)`。
