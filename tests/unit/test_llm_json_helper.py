@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from lvnotes.core.config import LLMProfile
-from lvnotes.core.exceptions import LLMError
+from lvnotes.core.exceptions import LLMError, RateLimitError
 from lvnotes.llm.base import LLMClient
 from lvnotes.llm.json_helper import complete_json
 from lvnotes.llm.text_helper import complete_text
@@ -42,6 +42,22 @@ class StaticClient:
         return LLMTextResult(text=self._text, model="test", usage=LLMUsage(None, None, None))
 
 
+class RateLimitedOnceClient(StaticClient):
+    def __init__(self) -> None:
+        super().__init__('{"title":"hello","count":2}')
+        self.calls = 0
+
+    def complete(
+        self,
+        messages: list[LLMMessage],
+        options: LLMRequestOptions | None = None,
+    ) -> LLMTextResult:
+        self.calls += 1
+        if self.calls == 1:
+            raise RateLimitError("limited")
+        return super().complete(messages, options)
+
+
 def test_complete_json_builds_dataclass() -> None:
     client: LLMClient = StaticClient('{"title":"hello","count":2}')
     result = complete_json(client, [LLMMessage(role="user", content=[TextPart("x")])], JsonResult)
@@ -76,3 +92,29 @@ def test_complete_text_rejects_reasoning_without_capability() -> None:
             [LLMMessage(role="user", content=[TextPart("x")])],
             LLMRequestOptions(reasoning_effort="medium"),
         )
+
+
+def test_complete_text_retries_rate_limit_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    profile = LLMProfile(
+        name="retry_limited",
+        provider="openai_compatible_chat",
+        base_url="http://localhost:8000/v1",
+        api_key_env=None,
+        model="test",
+        capabilities=frozenset({"json_mode"}),
+        rpm_limit=100,
+    )
+    acquire_calls: list[tuple[str, int]] = []
+    sleeps: list[float] = []
+    monkeypatch.setattr("lvnotes.llm.text_helper.acquire_profile_rate_limit", lambda profile, token_budget: acquire_calls.append((profile.name, token_budget)))
+    monkeypatch.setattr("lvnotes.llm.text_helper.time.sleep", sleeps.append)
+    client = RateLimitedOnceClient()
+    client._profile = profile
+
+    result = complete_text(client, [LLMMessage(role="user", content=[TextPart("x")])])
+
+    assert result.text == '{"title":"hello","count":2}'
+    assert client.calls == 2
+    assert len(acquire_calls) == 2
+    assert [name for name, _ in acquire_calls] == ["retry_limited", "retry_limited"]
+    assert sleeps == [5.0]

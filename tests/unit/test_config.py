@@ -16,6 +16,8 @@ def _minimal_config() -> dict[str, object]:
                     "api_key_env": "OPENAI_API_KEY",
                     "model": "gpt-5",
                     "capabilities": ["json_mode"],
+                    "rpm_limit": 60,
+                    "tpm_limit": 90000,
                 },
                 "vlm": {
                     "provider": "openai_compatible_chat",
@@ -41,9 +43,34 @@ def test_app_config_validates_minimal_config() -> None:
     config = AppConfig.model_validate(_minimal_config())
 
     assert config.llm.profiles["main"].name == "main"
+    assert config.llm.profiles["main"].rpm_limit == 60
+    assert config.llm.profiles["main"].tpm_limit == 90000
     assert config.audio_pipeline.extract.sample_rate == 16000
     assert config.audio_pipeline.refine.mode == "adaptive"
     assert config.audio_pipeline.refine.batch_size == 8
+
+
+@pytest.mark.parametrize("field", ["rpm_limit", "tpm_limit"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_rate_limits_must_be_positive(field: str, value: int) -> None:
+    payload = _minimal_config()
+    profiles = payload["llm"]["profiles"]  # type: ignore[index]
+    profiles["main"][field] = value  # type: ignore[index]
+
+    with pytest.raises(ValueError, match=f"{field} must be positive"):
+        AppConfig.model_validate(payload)
+
+
+def test_rate_limits_may_be_null() -> None:
+    payload = _minimal_config()
+    profiles = payload["llm"]["profiles"]  # type: ignore[index]
+    profiles["main"]["rpm_limit"] = None  # type: ignore[index]
+    profiles["main"]["tpm_limit"] = None  # type: ignore[index]
+
+    config = AppConfig.model_validate(payload)
+
+    assert config.llm.profiles["main"].rpm_limit is None
+    assert config.llm.profiles["main"].tpm_limit is None
 
 
 def test_refine_config_validates_mode_and_batch_size() -> None:

@@ -30,6 +30,8 @@ class LLMProfile(FrozenModel):
     timeout_seconds: float | None = None
     reasoning_effort: str | None = None
     thinking_budget_tokens: int | None = None
+    rpm_limit: int | None = None
+    tpm_limit: int | None = None
 
     @field_validator("provider")
     @classmethod
@@ -59,6 +61,13 @@ class LLMProfile(FrozenModel):
     def validate_thinking_budget_tokens(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
             raise ValueError("thinking_budget_tokens must be positive")
+        return value
+
+    @field_validator("rpm_limit", "tpm_limit")
+    @classmethod
+    def validate_rate_limit(cls, value: int | None, info) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError(f"{info.field_name} must be positive")
         return value
 
     @model_validator(mode="after")

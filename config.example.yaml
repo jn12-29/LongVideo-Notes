@@ -6,6 +6,7 @@ llm:
   profiles:
     # Candidate: OpenAI main model.
     # Use this for audio, merge, and strong visual description stages.
+    # Rate limits are per profile. null means unlimited.
     openai_gpt_main: &openai_gpt_main
       provider: openai_responses
       base_url: https://api.openai.com/v1
@@ -15,8 +16,11 @@ llm:
       max_context: 1000000
       timeout_seconds: 3000
       reasoning_effort: medium
+      rpm_limit: null
+      tpm_limit: null
 
     # Candidate: cheap/fast VLM for visual judging.
+    # Rate limits are per profile. null means unlimited.
     openrouter_weak_vlm: &openrouter_weak_vlm
       provider: openai_compatible_chat
       base_url: https://openrouter.ai/api/v1
@@ -24,6 +28,8 @@ llm:
       model: google/gemini-2.5-flash
       capabilities: [vision]
       timeout_seconds: 3000
+      rpm_limit: null
+      tpm_limit: null
 
     # Candidate: custom OpenAI-compatible text endpoint.
     # Local endpoints may use api_key_env: null. Remote endpoints should use an env var.

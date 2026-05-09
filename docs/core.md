@@ -482,6 +482,13 @@ class LLMProfile:
     capabilities: frozenset[str]
     max_context: int | None = None
     timeout_seconds: float | None = None
+    reasoning_effort: str | None = None
+    thinking_budget_tokens: int | None = None
+    rpm_limit: int | None = None
+    tpm_limit: int | None = None
+
+    # rpm_limit and tpm_limit are profile-level in-process rate limits.
+    # None / YAML null means unlimited; non-null values must be positive integers.
 
 @dataclass(frozen=True)
 class LLMConfig:

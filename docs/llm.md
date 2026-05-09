@@ -280,6 +280,8 @@ llm:
       max_context: 1000000
       timeout_seconds: 120
       reasoning_effort: medium
+      rpm_limit: null
+      tpm_limit: null
     claude_main:
       provider: anthropic_messages
       base_url: https://api.anthropic.com
@@ -296,6 +298,8 @@ llm:
       model: google/gemini-2.5-flash
       capabilities: [vision]
       timeout_seconds: 60
+      rpm_limit: 30
+      tpm_limit: 60000
 
 tasks:
   segment: gpt_main
@@ -319,10 +323,14 @@ tasks:
 | `timeout_seconds` | 单次请求超时，可空 |
 | `reasoning_effort` | OpenAI / Chat-compatible reasoning 强度，可空；允许 `minimal`、`low`、`medium`、`high` |
 | `thinking_budget_tokens` | Anthropic thinking token 预算，可空；必须为正整数 |
+| `rpm_limit` | profile 每分钟请求数上限，可空；`null` 表示不限速；配置时必须为正整数 |
+| `tpm_limit` | profile 每分钟预估 token 数上限，可空；`null` 表示不限速；配置时必须为正整数 |
 
 `llm` 配置不提供默认 profile。每个会调用 LLM 的 stage 必须通过 `tasks.<task_name>` 显式映射到 profile；缺失映射应在配置加载或 `for_task()` 时抛 `ConfigError`。
 
 `reasoning_effort` / `thinking_budget_tokens` 是 profile 默认值，所有映射到该 profile 的任务都会继承。调用方也可通过 `LLMRequestOptions` 覆盖为其他值。使用任一 reasoning 选项时，profile 必须声明 `reasoning` capability。
+
+`rpm_limit` / `tpm_limit` 是 profile 级进程内限速。`null` 表示不限速。所有映射到同一 profile name 的调用共享同一个限速窗口；请求会在发送到 provider 前排队等待。`tpm_limit` 使用请求前估算 token 预算，不依赖 provider 返回 usage。
 
 Provider 映射规则：
 
@@ -408,8 +416,10 @@ def complete_text(
 5. 校验 reasoning 选项需要 `reasoning` capability,并校验 provider-specific 选项:
    - `openai_chat` / `openai_compatible_chat` / `openai_responses` 使用 `reasoning_effort`
    - `anthropic_messages` 使用 `thinking_budget_tokens`
-6. 调用 `client.complete(messages, options)`。
-7. 返回 `LLMTextResult`。
+6. 根据 profile 的 `rpm_limit` / `tpm_limit` 做请求前限速等待。
+7. 调用 `client.complete(messages, options)`。
+8. provider 返回 `RateLimitError` 时做有限退避重试。
+9. 返回 `LLMTextResult`。
 
 `complete_text()` 不解析 JSON、不做业务校验、不修改 stage prompt。
 
@@ -637,3 +647,4 @@ Import 规则：
 8. repair 后仍失败抛 `LLMError`。
 9. schema 通过但业务不变量错误不在 helper 中处理。
 10. stage 不直接 import `openai` 或 `anthropic`。
+11. profile 配置 `rpm_limit` / `tpm_limit` 时，所有 `complete_text()` 和 `complete_json()` 调用都受同一 profile name 的进程内限速控制。
