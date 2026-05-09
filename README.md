@@ -21,12 +21,14 @@
 python -m lvnotes --help
 lvnotes run <input-file>
 lvnotes run <input-file> --mm
+lvnotes run <input-file> --head-minutes 10
 lvnotes inspect audio refined <input-file>
 lvnotes inspect merge note <input-file> --paths
 lvnotes assemble <input-file> --no-cache
 ```
 
 默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
+传 `--head-minutes <minutes>` 时，CLI 会先在输入文件同目录生成或复用 `<stem>.head-<minutes>m<suffix>`，然后只处理该裁剪文件。
 运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。
 最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
 

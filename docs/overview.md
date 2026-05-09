@@ -164,7 +164,8 @@ longvideo-notes/
 │   ├── media/                   (ffmpeg 唯一入口)
 │   │   ├── probe.py
 │   │   ├── audio.py
-│   │   └── video.py
+│   │   ├── video.py
+│   │   └── trim.py
 │   │
 │   ├── llm/                     (LLM provider 抽象,唯一入口)
 │   │   ├── base.py
@@ -396,7 +397,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 当前实现按以下模块边界组织,每个 stage 应保持可单独执行和可独立验收。
 
-1. **基础设施**:`core/`(schemas、paths、timestamps、slugs、pipeline、cache、config、logging、context)+ `media/probe.py` + `media/audio.py` + `cli/app.py` + `.importlinter` 契约。
+1. **基础设施**:`core/`(schemas、paths、timestamps、slugs、pipeline、cache、config、logging、context)+ `media/probe.py` + `media/audio.py` + `media/trim.py` + `cli/app.py` + `.importlinter` 契约。
 2. **LLM 抽象**:`llm/`(base、types、openai_chat、openai_responses、anthropic_messages、openai_compatible_chat、json_helper、factory)。
 3. **ASR 抽象**:`asr/`(base、faster_whisper_local、factory)。
 4. **音频管线**:按 stage 顺序 extract → transcribe → segment → refine。

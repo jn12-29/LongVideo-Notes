@@ -1,7 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-import json
 import logging
 from pathlib import Path
 
@@ -17,6 +16,7 @@ from lvnotes.core.logging import configure_logging
 from lvnotes.core.paths import PipelinePaths, build_paths
 from lvnotes.core.progress import progress_write
 from lvnotes.media.probe import probe_media
+from lvnotes.media.trim import resolve_head_trim_path, trim_media_head
 from lvnotes.merge import assemble, outline, section, unify
 from lvnotes.visual_pipeline import cluster, describe, judge, sample, select
 
@@ -53,10 +53,11 @@ def main() -> None:
 @click.argument("input_file", type=click.Path(path_type=Path))
 @click.option("--config", "config_path", type=click.Path(path_type=Path), default=None)
 @click.option("--mm", is_flag=True, help="Enable multimodal mode for video input.")
+@click.option("--head-minutes", type=click.FloatRange(min=0, min_open=True), default=None, help="Trim and process only the first N minutes.")
 @click.option("--no-cache", is_flag=True)
 @click.option("--debug", is_flag=True)
-def run_command(input_file: Path, config_path: Path | None, mm: bool, no_cache: bool, debug: bool) -> None:
-    ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False)
+def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, no_cache: bool, debug: bool) -> None:
+    ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False, head_minutes=head_minutes, create_trim=True)
     _echo_run_header(ctx)
     if ctx.mode == "multimodal":
         _run_multimodal_upstream(ctx, debug)
@@ -78,10 +79,11 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, no_cache: 
 @click.argument("input_file", type=click.Path(path_type=Path))
 @click.option("--config", "config_path", type=click.Path(path_type=Path), default=None)
 @click.option("--mm", is_flag=True)
+@click.option("--head-minutes", type=click.FloatRange(min=0, min_open=True), default=None, help="Inspect artifacts for the existing first-N-minutes trim.")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--paths", "paths_only", is_flag=True)
-def inspect_command(namespace: str, stage: str, input_file: Path, config_path: Path | None, mm: bool, as_json: bool, paths_only: bool) -> None:
-    ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False)
+def inspect_command(namespace: str, stage: str, input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, as_json: bool, paths_only: bool) -> None:
+    ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False, head_minutes=head_minutes, create_trim=False)
     path = _inspect_path(ctx, namespace, stage)
     if paths_only:
         click.echo(path)
@@ -111,10 +113,11 @@ def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> cl
     @click.argument("input_file", type=click.Path(path_type=Path))
     @click.option("--config", "config_path", type=click.Path(path_type=Path), default=None)
     @click.option("--mm", is_flag=True)
+    @click.option("--head-minutes", type=click.FloatRange(min=0, min_open=True), default=None, help="Trim and process only the first N minutes.")
     @click.option("--no-cache", is_flag=True)
     @click.option("--debug", is_flag=True)
-    def command(input_file: Path, config_path: Path | None, mm: bool, no_cache: bool, debug: bool) -> None:
-        ctx = _make_context(input_file, config_path, mm, no_cache, debug and stage_name == "refine", require_mm=require_mm)
+    def command(input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, no_cache: bool, debug: bool) -> None:
+        ctx = _make_context(input_file, config_path, mm, no_cache, debug and stage_name == "refine", require_mm=require_mm, head_minutes=head_minutes, create_trim=True)
         if stage_name == "describe" and not ctx.artifacts.audio.is_complete():
             raise click.ClickException(str(CacheError("visual describe requires completed audio refine stage; run refine first")))
         output = _run_stage(ctx, stage_run)
@@ -125,12 +128,23 @@ def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> cl
     return command
 
 
-def _make_context(input_file: Path, config_path: Path | None, mm: bool, no_cache: bool, debug: bool, require_mm: bool) -> PipelineContext:
+def _make_context(
+    input_file: Path,
+    config_path: Path | None,
+    mm: bool,
+    no_cache: bool,
+    debug: bool,
+    require_mm: bool,
+    head_minutes: float | None = None,
+    create_trim: bool = True,
+) -> PipelineContext:
     try:
         configure_logging(debug)
         source_path = input_file.expanduser().resolve()
         if not source_path.exists():
             raise click.ClickException(f"input file not found: {source_path}")
+        if head_minutes is not None:
+            source_path = trim_media_head(source_path, head_minutes) if create_trim else resolve_head_trim_path(source_path, head_minutes)
         config = load_config(config_path)
         probe = probe_media(source_path)
         if probe.audio is None:

@@ -103,6 +103,7 @@ stage_module.run(ctx)
 ```bash
 lvnotes run <input-file>
 lvnotes run <input-file> --mm
+lvnotes run <input-file> --head-minutes 10
 lvnotes run <input-file> --config config.yaml
 lvnotes run <input-file> --no-cache
 lvnotes run <input-file> --debug
@@ -124,6 +125,8 @@ visual: sample  → cluster    → judge   → select ────┘
 
 `describe` 必须等 `AudioArtifacts.is_complete() == True`,并通过 `AudioArtifacts.get_text_at(start, end, strip_refs=True)` 读取讲解文本。
 
+`--head-minutes <minutes>` 会先在输入文件同目录生成或复用开头片段文件,再将该片段作为本次运行的输入。片段文件名为 `<source-stem>.head-<minutes>m<source-suffix>`,例如 `lecture.mp4 --head-minutes 10` 对应 `lecture.head-10m.mp4`。后续 `PipelineContext.source_path`、输入 hash、缓存目录、输出 Markdown 名称和所有 stage 输入都基于该片段文件。
+
 ### 3.2 `lvnotes inspect`
 
 查看中间产物,不触发计算。
@@ -135,12 +138,14 @@ lvnotes inspect audio refined <input-file>
 lvnotes inspect visual describe <input-file>
 lvnotes inspect merge outline <input-file>
 lvnotes inspect merge note <input-file> --paths
+lvnotes inspect merge note <input-file> --head-minutes 10 --paths
 ```
 
 支持选项:
 
 - `--json`:输出原始 JSON 或 schema 序列化结果
 - `--paths`:只输出对应产物路径
+- `--head-minutes <minutes>`:查看已存在开头片段对应的产物;不会创建片段文件
 
 默认输出摘要,不打印长正文。
 
@@ -151,6 +156,7 @@ lvnotes extract <input-file>
 lvnotes transcribe <input-file>
 lvnotes segment <input-file>
 lvnotes refine <input-file>
+lvnotes refine <input-file> --head-minutes 10
 lvnotes refine <input-file> --debug
 lvnotes refine <input-file> --no-cache
 ```
@@ -176,6 +182,7 @@ lvnotes refine <input-file> --no-cache
 
 ```bash
 lvnotes sample <input-file> --mm
+lvnotes sample <input-file> --mm --head-minutes 10
 lvnotes cluster <input-file> --mm
 lvnotes judge <input-file> --mm
 lvnotes select <input-file> --mm
@@ -197,6 +204,7 @@ lvnotes describe <input-file> --mm
 ```bash
 lvnotes unify <input-file>
 lvnotes unify <input-file> --mm
+lvnotes unify <input-file> --head-minutes 10
 lvnotes outline <input-file>
 lvnotes outline <input-file> --mm
 lvnotes section <input-file>
@@ -258,6 +266,20 @@ mode: multimodal
 ```
 
 该值来自 CLI 本次运行模式,不来自配置文件。
+
+### 4.4 `--head-minutes` 输入裁剪
+
+`--head-minutes <minutes>` 支持视频和音频输入。CLI 在创建 `PipelineContext` 前处理该参数:
+
+1. 解析原始输入路径
+2. 在原始输入同目录定位 `<source-stem>.head-<minutes>m<source-suffix>`
+3. `run` 和 stage 命令在片段不存在时创建片段,片段已存在时默认复用
+4. `inspect` 只使用已存在片段,片段不存在时报错
+5. 对片段执行媒体探测、输入 hash、路径构建和模式判断
+
+复用片段时必须确认文件非空、可被 `ffprobe` 读取且包含 audio stream。多模模式仍遵循 `--mm` 规则:片段必须包含 video stream。
+
+`--no-cache` 不强制重建片段文件,只控制 stage 缓存读取。
 CLI 创建 `PipelineContext.mode`,值只能是 `"audio_only"` 或 `"multimodal"`;assemble frontmatter 直接使用该字段。
 
 ---
@@ -484,7 +506,8 @@ Import 规则:
 | `audio_pipeline/*` stage 模块 | ✅ |
 | `visual_pipeline/*` stage 模块 | ✅ |
 | `merge/*` stage 模块 | ✅ |
-| `media/probe.py` | ✅,仅用于输入类型判断 |
+| `media/probe.py` | ✅,用于输入类型判断 |
+| `media/trim.py` | ✅,用于 `--head-minutes` 输入裁剪 |
 | `llm/` 直接调用 client | ❌ |
 | `asr/` 直接调用 transcriber | ❌ |
 | `subprocess` 调 ffmpeg | ❌ |
@@ -507,6 +530,7 @@ Import 规则:
 - `visual_pipeline/`
 - `merge/`
 - `media/probe.py`
+- `media/trim.py`
 
 预计外部库:
 
@@ -535,15 +559,18 @@ CLI 验收覆盖：
 ```bash
 lvnotes run lecture.mp4
 lvnotes run lecture.mp4 --mm
+lvnotes run lecture.mp4 --head-minutes 10
 
 lvnotes extract lecture.mp4
 lvnotes transcribe lecture.mp4
 lvnotes segment lecture.mp4
 lvnotes refine lecture.mp4
+lvnotes refine lecture.mp4 --head-minutes 10
 lvnotes refine lecture.mp4 --debug
 lvnotes refine lecture.mp4 --no-cache
 
 lvnotes sample lecture.mp4 --mm
+lvnotes sample lecture.mp4 --mm --head-minutes 10
 lvnotes cluster lecture.mp4 --mm
 lvnotes judge lecture.mp4 --mm
 lvnotes select lecture.mp4 --mm
@@ -560,6 +587,7 @@ lvnotes inspect audio refined lecture.mp4
 lvnotes inspect visual describe lecture.mp4
 lvnotes inspect merge outline lecture.mp4
 lvnotes inspect merge note lecture.mp4 --paths
+lvnotes inspect merge note lecture.mp4 --head-minutes 10 --paths
 ```
 
 核心不变量:
@@ -571,3 +599,4 @@ lvnotes inspect merge note lecture.mp4 --paths
 5. `visual describe` 必须等待 audio refined
 6. `assemble --no-cache` 用于人工编辑 sections 后重新合成笔记
 7. 所有 stage 单独可调用,且与 `run` 使用同一套 stage 实现
+8. `--head-minutes` 让本次命令处理同目录开头片段文件,不改变 stage 实现
