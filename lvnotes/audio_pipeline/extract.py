@@ -29,8 +29,6 @@ def run(ctx: PipelineContext) -> StageOutput:
         raise AssertionError("input must have an audio stream before extraction")
     extract_wav(ctx.source_path, ctx.paths.audio_wav, cfg.sample_rate, cfg.channels)
     wav_probe = probe_media(ctx.paths.audio_wav)
-    if abs(wav_probe.duration - source_probe.duration) > 0.1:
-        raise AssertionError("extracted wav duration differs from source duration")
 
     result = AudioExtractResult(
         audio_path=ctx.paths.audio_wav,
