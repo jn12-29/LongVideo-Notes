@@ -6,9 +6,12 @@ import pytest
 from lvnotes.core.cache import build_cache_key, hash_json
 from lvnotes.core.serialization import from_jsonable, to_jsonable
 from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
+from lvnotes.core.schemas.merge import Chapter, Outline
 from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, format_mmss, parse_ts_marker, render_timestamp
 from lvnotes.core.transcript import slice_transcript_text
+from lvnotes.merge.assemble import _normalize_markdown_spacing, _render_refs, _strip_section_heading
+from lvnotes.merge.outline import _validate_outline
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,84 @@ def test_invalid_timestamp_marker_raises() -> None:
 def test_chapter_anchor_keeps_cjk_and_prefix() -> None:
     assert make_chapter_anchor(3, " 第一章: 概念 / Demo ").startswith("chapter-3-")
     assert "第一章" in make_chapter_anchor(3, " 第一章: 概念 / Demo ")
+
+
+def test_assemble_strips_generated_section_heading() -> None:
+    assert _strip_section_heading("## 创新主题与论述\n\n正文", "创新主题与论述") == "正文"
+    assert _strip_section_heading("### 3. 国际竞争与自主创新\n正文", "国际竞争与自主创新") == "正文"
+
+
+def test_render_refs_drops_current_chapter_self_refs() -> None:
+    text = "当前 [[REF:2]]，前文 [[REF:0]]。"
+    rendered = _render_refs(
+        text,
+        {0: 1, 2: 2},
+        {1: "chapter-1-a", 2: "chapter-2-b"},
+        current_chapter_id=2,
+    )
+
+    assert rendered == "当前 ，前文 [§1](#chapter-1-a)。"
+
+
+def test_normalize_markdown_spacing_cleans_ref_and_timestamp_spacing() -> None:
+    assert _normalize_markdown_spacing("[00:05:32]那么是不是。 ") == "[00:05:32] 那么是不是。"
+    assert _normalize_markdown_spacing("当前 ，前文。") == "当前，前文。"
+    assert _normalize_markdown_spacing("[00:01:45]  \n正文  ") == "[00:01:45]\n正文"
+    assert _normalize_markdown_spacing("结论[00:07:05] 。") == "结论。[00:07:05]"
+
+
+def test_render_timestamps_accepts_range_marker_start() -> None:
+    class AssembleConfig:
+        timestamp_format = "[{hms}]"
+        video_url_template = None
+
+    class MergeConfig:
+        assemble = AssembleConfig()
+
+    class Config:
+        merge = MergeConfig()
+
+    class Ctx:
+        config = Config()
+
+    from lvnotes.merge.assemble import _render_timestamps
+
+    assert _render_timestamps(Ctx(), "[[TS:67.340-77.250]] 正文") == "[00:01:07] 正文"
+
+
+def _outline(chapters: list[tuple[int, int, int]]) -> Outline:
+    return Outline(
+        chapters=[
+            Chapter(id=chapter_id, title=f"Chapter {chapter_id}", summary="summary", block_id_start=start, block_id_end=end)
+            for chapter_id, start, end in chapters
+        ]
+    )
+
+
+def test_validate_outline_accepts_contiguous_coverage() -> None:
+    _validate_outline(_outline([(1, 0, 1), (2, 2, 4)]), block_count=5)
+
+
+def test_validate_outline_rejects_invalid_ids_and_ranges() -> None:
+    with pytest.raises(Exception, match="id or range"):
+        _validate_outline(_outline([(0, 0, 1)]), block_count=2)
+
+    with pytest.raises(Exception, match="id or range"):
+        _validate_outline(_outline([(1, 0, 1), (2, 3, 2), (3, 3, 4)]), block_count=5)
+
+
+def test_validate_outline_rejects_missing_or_overlapping_blocks() -> None:
+    with pytest.raises(Exception, match="coverage"):
+        _validate_outline(_outline([(1, 1, 2)]), block_count=3)
+
+    with pytest.raises(Exception, match="coverage"):
+        _validate_outline(_outline([(1, 0, 1)]), block_count=3)
+
+    with pytest.raises(Exception, match="contiguous"):
+        _validate_outline(_outline([(1, 0, 1), (2, 3, 4)]), block_count=5)
+
+    with pytest.raises(Exception, match="contiguous"):
+        _validate_outline(_outline([(1, 0, 2), (2, 2, 4)]), block_count=5)
 
 
 def test_slice_transcript_text_uses_words_for_partial_segment() -> None:

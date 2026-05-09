@@ -12,7 +12,7 @@ from lvnotes.merge._common import cache_output, cached_output, read_blocks, read
 
 log = logging.getLogger(__name__)
 _REF_RE = re.compile(r"\[\[REF:(\d+)\]\]")
-_TS_RE = re.compile(r"\[\[TS:(\d+(?:\.\d+)?)\]\]")
+_TS_RE = re.compile(r"\[\[TS:(\d+(?:\.\d+)?)(?:-\d+(?:\.\d+)?)?\]\]")
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -45,10 +45,26 @@ def _assemble_note(ctx: PipelineContext, outline, blocks, section_paths: list) -
         parts.append("\n".join(f"- [{chapter.title}](#{anchors[chapter.id]})" for chapter in outline.chapters) + "\n")
     for chapter, path in zip(outline.chapters, section_paths):
         text = path.read_text(encoding="utf-8")
-        text = _render_refs(text, block_to_chapter, anchors)
+        text = _strip_section_heading(text, chapter.title)
+        text = _render_refs(text, block_to_chapter, anchors, current_chapter_id=chapter.id)
         text = _render_timestamps(ctx, text)
+        text = _normalize_markdown_spacing(text)
         parts.append(f"## {chapter.title}\n{text.strip()}\n")
     return "\n".join(parts).rstrip() + "\n"
+
+
+def _strip_section_heading(text: str, chapter_title: str) -> str:
+    lines = text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if not lines:
+        return ""
+    heading = lines[0].strip()
+    if heading.startswith("#"):
+        title = heading.lstrip("#").strip()
+        if title == chapter_title or title.endswith(f" {chapter_title}"):
+            return "\n".join(lines[1:]).lstrip()
+    return "\n".join(lines)
 
 
 def _frontmatter(ctx: PipelineContext) -> str:
@@ -72,13 +88,15 @@ def _frontmatter(ctx: PipelineContext) -> str:
     )
 
 
-def _render_refs(text: str, block_to_chapter: dict[int, int], anchors: dict[int, str]) -> str:
+def _render_refs(text: str, block_to_chapter: dict[int, int], anchors: dict[int, str], *, current_chapter_id: int | None = None) -> str:
     def replace(match: re.Match[str]) -> str:
         block_id = int(match.group(1))
         chapter_id = block_to_chapter.get(block_id)
         if chapter_id is None:
             log.warning("assemble: cross_ref §%s not resolvable, rendered as plain text", block_id + 1)
             return f"§{block_id + 1}"
+        if chapter_id == current_chapter_id:
+            return ""
         return f"[§{block_id + 1}](#{anchors[chapter_id]})"
 
     return _REF_RE.sub(replace, text)
@@ -101,3 +119,10 @@ def _render_timestamps(ctx: PipelineContext, text: str) -> str:
         return f"[{label}]({url})"
 
     return _TS_RE.sub(replace, text)
+
+
+def _normalize_markdown_spacing(text: str) -> str:
+    text = re.sub(r"(\[\d{2}:\d{2}:\d{2}\])\s*([。！？；，、,.!?;:])", r"\2\1", text)
+    text = re.sub(r" +([。！？；，、,.!?;:])", r"\1", text)
+    text = re.sub(r"(\[\d{2}:\d{2}:\d{2}\])(?!\s|$)", r"\1 ", text)
+    return "\n".join(line.rstrip() for line in text.splitlines())

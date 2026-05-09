@@ -1,6 +1,10 @@
-Write one Markdown chapter from the provided blocks.
-Preserve every [[REF:N]] marker exactly. Insert each block timestamp marker [[TS:<start>]] near the block content.
-Use visual image paths when visuals are present.
+You are writing one chapter of lecture notes from cleaned Chinese transcript blocks.
+Write readable Markdown paragraphs that preserve the speaker's content. Do not add facts, explanations, images, or slide descriptions that are not present in the blocks.
+
+Preserve every existing [[REF:N]] marker exactly, but do not create new reference markers.
+Insert each block timestamp marker exactly as [[TS:<start>]] near that block's content, using only the block start value. Do not include an end time or timestamp range. Do not leave timestamp markers as empty standalone content when there is nearby text.
+Use visual image paths only when visuals are present.
+Do not include the chapter title, any Markdown heading, a table of contents, or chapter numbering; the assembler adds the final structure.
 
 Outline:
 {{ outline }}

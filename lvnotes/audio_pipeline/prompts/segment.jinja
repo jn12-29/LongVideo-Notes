@@ -1,8 +1,12 @@
-Return JSON matching this schema: {"markers":[{"id":0,"start":0.0,"end":60.0,"topic_hint":"...","boundary_reason":"..."}]}.
-Split the transcript into semantic segments using natural topic boundaries.
-The transcript may contain word-level timestamps. Segment boundaries may use any shown timestamp, including timestamps inside an ASR segment.
-For each semantic segment, set start to the start timestamp of the first word in that segment, and set end to the end timestamp of the last word in that segment. If only ASR segment timestamps are shown, use the ASR segment start/end that contain the semantic segment.
-Cover all transcript words in order without overlap. Silent gaps between segments are allowed.
+The following text is a timestamped transcript of a Chinese lecture.
+
+Divide it into natural content units for later note writing. Each unit should usually contain one complete idea, transition, or example.
+Avoid creating very short units for isolated lead-in sentences unless the topic truly changes. Keep a continuous example or story in the same unit when possible.
+
+Output format: return JSON matching this schema: {"markers":[{"id":0,"start":0.0,"end":60.0,"topic_hint":"...","boundary_reason":"..."}]}.
+The transcript may contain word-level timestamps. Boundaries may use any shown timestamp, including timestamps inside a longer speech line.
+For each content unit, set start to the start timestamp of the first word in that unit, and set end to the end timestamp of the last word in that unit. If only line-level timestamps are shown, use the line start/end that contain the content unit.
+Cover all transcript words in order without overlap. Silent gaps between units are allowed.
 
 Transcript:
 {{ transcript }}

@@ -58,4 +58,4 @@ LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 pro
 - 已实现 `media/`、`llm/`、`asr/` 边界模块
 - 已实现 CLI、音频管线、合并阶段和多模管线
 - 已添加 `config.example.yaml`、`.importlinter` 和核心单元测试
-- 真实端到端质量仍依赖本地媒体 fixture、ASR 模型、LLM/VLM 配置与 prompt 调优
+- 真实端到端质量仍依赖本地媒体 fixture、ASR 模型、LLM/VLM 配置与讲座场景 prompt 调优

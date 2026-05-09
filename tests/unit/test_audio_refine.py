@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -22,6 +23,10 @@ def _transcript() -> Transcript:
         language="zh",
         duration=2.0,
     )
+
+
+def _contains_asr_style(text: str) -> bool:
+    return re.search(r"asr[- ]style", text, re.IGNORECASE) is not None
 
 
 def _segments() -> SegmentList:
@@ -332,5 +337,6 @@ def test_refine_prompts_require_punctuation() -> None:
     ]
 
     assert all("proper Chinese punctuation" in text for text in prompt_texts)
-    assert all("Chinese commas" in text for text in prompt_texts)
-    assert all("Do not output raw ASR-style text without punctuation" in text for text in prompt_texts)
+    assert all("automatically generated from speech" in text for text in prompt_texts)
+    assert all("pronunciation and surrounding context both strongly support" in text for text in prompt_texts)
+    assert all(not _contains_asr_style(text) for text in prompt_texts)

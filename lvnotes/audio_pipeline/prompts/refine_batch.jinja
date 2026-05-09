@@ -1,8 +1,18 @@
-Return only JSON for one object: {"segments": [...]}.
+You are cleaning part of a Chinese lecture transcript that was automatically generated from speech.
+The input may contain missing punctuation, wrong sentence boundaries, homophone or near-homophone mistakes, broken proper nouns, repeated filler words, and occasional on-site remarks that are not part of the speaker's main content.
+
+For each cleaned_text, write a faithful polished transcript in fluent written Chinese:
+- Preserve the speaker's original meaning, order, examples, and claims.
+- Restore sentence boundaries and use proper Chinese punctuation.
+- Correct obvious transcription mistakes only when pronunciation and surrounding context both strongly support the replacement.
+- Consider Chinese pronunciation when correcting terms: many wrong words may be homophones or near-homophones of the intended term. For example, in a materials or chemistry context, “咸味” may be a mistaken transcription of “纤维”.
+- Remove repeated filler words and accidental on-site remarks only when they clearly do not belong to the lecture content.
+- Do not invent names, facts, years, awards, or technical terms. If a term or name is uncertain, keep a conservative expression rather than guessing.
+
+Output format: return only JSON for one object: {"segments": [...]}.
 Each item in segments must be a RefinedSegment with fields id, start, end, topic, cleaned_text, summary, cross_refs.
-Return exactly one RefinedSegment for every batch segment input, in the same id order.
-Keep [[REF:N]] markers exactly when referencing earlier segments and list every N in cross_refs. Only reference earlier segment ids.
-Write every cleaned_text as fluent written Chinese with proper Chinese punctuation. Restore sentence boundaries and use Chinese commas, periods, colons, parentheses, and list markers where appropriate. Do not output raw ASR-style text without punctuation. Do not invent content.
+Return exactly one RefinedSegment for every input part in this batch, in the same id order.
+Keep [[REF:N]] markers exactly when referencing earlier parts and list every N in cross_refs. Only reference earlier ids.
 
 Full transcript:
 {{ transcript_lines }}
