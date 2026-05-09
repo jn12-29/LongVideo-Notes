@@ -19,7 +19,9 @@ def run(ctx: PipelineContext) -> StageOutput:
     cache_key = build_cache_key("extract", {"input": input_hash, "config": config_hash})
     output_paths = [ctx.paths.audio_wav, ctx.paths.audio_extract_json]
     if not ctx.no_cache:
-        cached = cached_output("extract", output_paths, cache_key, manifest_output_path=ctx.paths.audio_extract_json)
+        cached = cached_output(
+            "extract", output_paths, cache_key, manifest_output_path=ctx.paths.audio_extract_json
+        )
         if cached is not None:
             log.info("audio.extract cache hit input_hash=%s", ctx.input_hash)
             return cached

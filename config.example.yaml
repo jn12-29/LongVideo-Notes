@@ -4,7 +4,9 @@ project:
 
 llm:
   profiles:
-    gpt_main:
+    # Candidate: OpenAI main model.
+    # Use this for audio, merge, and strong visual description stages.
+    openai_gpt_main: &openai_gpt_main
       provider: openai_responses
       base_url: https://api.openai.com/v1
       api_key_env: OPENAI_API_KEY
@@ -13,7 +15,9 @@ llm:
       max_context: 1000000
       timeout_seconds: 120
       reasoning_effort: medium
-    weak_vlm:
+
+    # Candidate: cheap/fast VLM for visual judging.
+    openrouter_weak_vlm: &openrouter_weak_vlm
       provider: openai_compatible_chat
       base_url: https://openrouter.ai/api/v1
       api_key_env: OPENROUTER_API_KEY
@@ -21,13 +25,54 @@ llm:
       capabilities: [vision]
       timeout_seconds: 60
 
+    # Candidate: custom OpenAI-compatible text endpoint.
+    # Local endpoints may use api_key_env: null. Remote endpoints should use an env var.
+    custom_gpt_main: &custom_gpt_main
+      provider: openai_compatible_chat
+      base_url: http://localhost:8000/v1
+      api_key_env: null
+      model: your-text-model
+      capabilities: [json_mode]
+      max_context: 128000
+      timeout_seconds: 120
+
+    # Candidate: custom weak VLM for visual judging.
+    custom_weak_vlm: &custom_weak_vlm
+      provider: openai_compatible_chat
+      base_url: http://localhost:8000/v1
+      api_key_env: null
+      model: your-fast-vlm-model
+      capabilities: [vision, json_mode]
+      timeout_seconds: 60
+
+    # Candidate: custom strong VLM for detailed visual descriptions.
+    custom_strong_vlm: &custom_strong_vlm
+      provider: openai_compatible_chat
+      base_url: http://localhost:8000/v1
+      api_key_env: null
+      model: your-strong-vlm-model
+      capabilities: [vision, json_mode]
+      max_context: 128000
+      timeout_seconds: 120
+
+    # Active stable interfaces used by tasks.
+    # Switch providers by changing only these aliases.
+    gpt_main:
+      <<: *openai_gpt_main
+
+    weak_vlm:
+      <<: *openrouter_weak_vlm
+
+    strong_vlm:
+      <<: *openai_gpt_main
+
 tasks:
   segment: gpt_main
   refine: gpt_main
   outline: gpt_main
   section: gpt_main
   slide_judge: weak_vlm
-  slide_describe: gpt_main
+  slide_describe: strong_vlm
 
 asr:
   backend: faster_whisper_local
