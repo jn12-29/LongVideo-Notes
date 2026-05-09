@@ -1,10 +1,18 @@
 You are writing one chapter of lecture notes from cleaned Chinese transcript blocks.
 Write readable Markdown paragraphs that preserve the speaker's content. Do not add facts, explanations, images, or slide descriptions that are not present in the blocks.
 
+The final assembler will wrap this chapter under a level-2 heading: ## <chapter title>.
+Do not output # or ## headings.
+You may use ### or #### subheadings inside the chapter when they make the notes clearer.
+Do not create a subheading for every block mechanically.
+
 Preserve every existing [[REF:N]] marker exactly, but do not create new reference markers.
-Insert each block timestamp marker exactly as [[TS:<start>]] near that block's content, using only the block start value. Do not include an end time or timestamp range. Do not leave timestamp markers as empty standalone content when there is nearby text.
+For each input block, place its timestamp marker at the start of that block's paragraph: [[TS:<start>]] <block content>.
+Do not place timestamp markers at the end of a sentence, in the middle of a sentence, or before punctuation.
+Use only the block start value. Do not include an end time or timestamp range.
+Prefer one paragraph per block when the block contains a distinct idea.
 Use visual image paths only when visuals are present.
-Do not include the chapter title, any Markdown heading, a table of contents, or chapter numbering; the assembler adds the final structure.
+Do not include the chapter title, a table of contents, or chapter numbering; the assembler adds the final structure.
 
 Outline:
 {{ outline }}

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from lvnotes.core.config import ASRConfig
 from lvnotes.core.exceptions import ASRError
+from lvnotes.core.progress import progress_bar
 from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
 from lvnotes.core.timestamps import normalize_seconds
 
@@ -24,15 +25,16 @@ class FasterWhisperLocalTranscriber:
         transcriber, batch_size = _transcriber(model, batched_pipeline_class, config, device)
         try:
             segments, transcript_info = _run_transcribe(transcriber, audio_path, config, batch_size)
-        except RuntimeError as exc:
+            duration = _duration(transcript_info)
+            normalized_segments = _normalize_segments(_consume_segments_with_progress(segments, duration))
+        except (AttributeError, TypeError, ValueError, RuntimeError, AssertionError) as exc:
             raise ASRError(f"faster-whisper inference failed: {exc}") from exc
-        normalized_segments = _normalize_segments(list(segments))
         if not normalized_segments:
             raise ASRError("no speech detected")
         return Transcript(
             segments=normalized_segments,
             language=_language(transcript_info, config.language),
-            duration=_duration(transcript_info),
+            duration=duration,
         )
 
 
@@ -97,14 +99,18 @@ def _run_transcribe(
 
 def _normalize_segments(segments: list[object]) -> list[TranscriptSegment]:
     normalized: list[TranscriptSegment] = []
-    for segment_id, segment in enumerate(segments):
-        start = normalize_seconds(float(getattr(segment, "start")))
-        end = normalize_seconds(float(getattr(segment, "end")))
+    previous_end = 0.0
+    for segment in segments:
+        start = normalize_seconds(_segment_seconds(segment, "start"))
+        end = normalize_seconds(_segment_seconds(segment, "end"))
         if start >= end:
             raise AssertionError("ASR segment start must be less than end")
+        if start < previous_end:
+            raise AssertionError("ASR segments must be ordered")
         text = str(getattr(segment, "text", "")).strip()
         if text == "":
             continue
+        previous_end = end
         normalized.append(
             TranscriptSegment(
                 id=len(normalized),
@@ -115,6 +121,29 @@ def _normalize_segments(segments: list[object]) -> list[TranscriptSegment]:
             )
         )
     return normalized
+
+
+def _consume_segments_with_progress(segments: object, duration: float) -> list[object]:
+    raw_segments: list[object] = []
+    last_end = 0.0
+    total = duration if duration > 0 else None
+    if total is None:
+        return list(segments)  # type: ignore[arg-type]
+    with progress_bar(desc="audio.transcribe", total=total, unit="s") as bar:
+        for segment in segments:  # type: ignore[union-attr]
+            raw_segments.append(segment)
+            end = min(_segment_seconds(segment, "end"), duration)
+            if end > last_end:
+                bar.update(end - last_end)
+                last_end = end
+        if last_end < duration:
+            bar.update(duration - last_end)
+    return raw_segments
+
+
+def _segment_seconds(segment: object, field_name: str) -> float:
+    value = getattr(segment, field_name)
+    return float(value)
 
 
 def _normalize_words(words: object) -> list[WordTimestamp]:

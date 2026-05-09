@@ -8,6 +8,7 @@ from lvnotes.core.cache import atomic_write_text, build_cache_key, hash_file, ha
 from lvnotes.core.context import PipelineContext
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.paths import make_markdown_image_path
+from lvnotes.core.progress import progress_bar
 from lvnotes.core.schemas import Chapter, ContentBlock, Outline
 from lvnotes.llm import LLMMessage, LLMRequestOptions, TextPart, complete_text, for_task
 
@@ -38,17 +39,25 @@ def run(ctx: PipelineContext) -> StageOutput:
                 output_paths.append(path)
                 continue
         jobs.append((chapter, chapter_blocks, path, cache_key))
-    with ThreadPoolExecutor(max_workers=ctx.config.merge.section.concurrent_calls) as executor:
-        futures = [
-            executor.submit(_write_section, ctx, template, outline, chapter, chapter_blocks, path, cache_key, config_hash, prompt_hash)
-            for chapter, chapter_blocks, path, cache_key in jobs
-        ]
-        for future in as_completed(futures):
-            output_paths.append(future.result())
+    if jobs:
+        with ThreadPoolExecutor(max_workers=ctx.config.merge.section.concurrent_calls) as executor:
+            futures = [
+                executor.submit(_write_section, ctx, template, outline, chapter, chapter_blocks, path, cache_key, config_hash, prompt_hash)
+                for chapter, chapter_blocks, path, cache_key in jobs
+            ]
+            with progress_bar(desc="merge.section", total=len(futures), unit="chapter") as bar:
+                for future in as_completed(futures):
+                    output_paths.append(future.result())
+                    bar.update(1)
     output_paths.sort()
     content_hash = hash_json([hash_file(path) for path in output_paths])
-    return StageOutput("section", output_paths, False, content_hash, {"item_count": len(output_paths)})
-
+    return StageOutput(
+        "section",
+        output_paths,
+        len(jobs) == 0,
+        content_hash,
+        {"item_count": len(output_paths), "cached_count": len(output_paths) - len(jobs), "job_count": len(jobs)},
+    )
 
 
 def _write_section(

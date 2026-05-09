@@ -47,6 +47,11 @@ def test_structure_prompts_describe_lecture_note_tasks() -> None:
     assert "previous chapter's block_id_end + 1" in outline
     assert "Cover every input block exactly once" in outline
     assert "cleaned Chinese transcript blocks" in section
-    assert "Do not include the chapter title" in section
+    assert "level-2 heading" in section
+    assert "Do not output # or ## headings" in section
+    assert "You may use ### or #### subheadings" in section
     assert "do not create new reference markers" in section
+    assert "timestamp marker at the start" in section
+    assert "Do not place timestamp markers at the end" in section
+    assert "in the middle of a sentence" in section
     assert "Do not include an end time or timestamp range" in section

@@ -407,8 +407,13 @@ audio.extract: running
 visual.sample: running
 audio.extract: done
 visual.sample: done
+audio.transcribe: running
+audio.transcribe:  42%|████▏     | 1520/3600s
+audio.transcribe: done
 Output: output/note.md
 ```
+
+CLI 始终显示 stage 级 `running` / `done` / `cache hit`。可计数的长耗时任务使用 `tqdm` 进度条:ASR 按音频秒数近似推进,refine 按 segment 推进,visual describe 按 selection 推进,merge section 按 chapter job 推进。非 TTY 输出禁用动态进度条,只保留普通状态行和日志。
 
 日志遵循 `coding-standards.md`:
 
@@ -493,6 +498,7 @@ Import 规则:
 - `core/paths.py`
 - `core/artifacts.py`
 - `core/logging.py`
+- `core/progress.py`
 - `core/exceptions.py`
 - `audio_pipeline/`
 - `visual_pipeline/`
@@ -502,7 +508,7 @@ Import 规则:
 预计外部库:
 
 - `typer` 或 `click`
-- `rich`,可选,如需进度条
+- `tqdm`
 
 具体依赖清单以 `pyproject.toml` 为准。
 

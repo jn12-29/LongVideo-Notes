@@ -215,6 +215,8 @@ segments, info = model.transcribe(
 - 不传 `initial_prompt`:避免 prompt 文案被模型幻觉进转录正文
 - 不启用 speaker diarization,项目第一版明确非目标
 
+转录进度通过消费 `segments` iterable 时更新:总量使用 `info.duration`,每产出一个 faster-whisper segment 后按 `segment.end` 推进 `tqdm` 秒级进度条。该进度表示已产出的音频时间戳范围,不是底层 GPU/CPU 计算百分比;VAD、长静音或长句子会导致进度跳跃。生成器结束后进度补到 100%。
+
 ### 4.5 batched 推理
 
 当且仅当同时满足以下条件时使用 batched:

@@ -16,6 +16,7 @@ from lvnotes.core.cache import (
 from lvnotes.core.context import PipelineContext
 from lvnotes.core.exceptions import LLMError
 from lvnotes.core.pipeline import StageOutput
+from lvnotes.core.progress import progress_bar, progress_write
 from lvnotes.core.schemas import (
     RefinedSegment,
     RefinedSegmentList,
@@ -78,23 +79,35 @@ def run(ctx: PipelineContext) -> StageOutput:
 
 def _run_refine(ctx: PipelineContext, transcript: Transcript, segments: SegmentList) -> RefinedTranscript:
     mode = ctx.config.audio_pipeline.refine.mode
-    if mode == "single_call":
-        return _run_single_call(ctx, transcript, segments)
-    if mode == "batched":
-        return _run_batched(ctx, transcript, segments)
-    if mode == "serial":
-        return _run_serial(ctx, transcript, segments.markers)
-    if mode == "adaptive":
-        return _run_adaptive(ctx, transcript, segments)
+    with progress_bar(desc="audio.refine", total=len(segments.markers), unit="segment") as bar:
+        if mode == "single_call":
+            result = _run_single_call(ctx, transcript, segments)
+            bar.update(len(segments.markers) - bar.n)
+            return result
+        if mode == "batched":
+            return _run_batched(ctx, transcript, segments, progress=bar)
+        if mode == "serial":
+            return _run_serial(ctx, transcript, segments.markers, progress=bar)
+        if mode == "adaptive":
+            return _run_adaptive(ctx, transcript, segments, progress=bar)
     raise AssertionError(f"unknown refine mode: {mode}")
 
 
-def _run_adaptive(ctx: PipelineContext, transcript: Transcript, segments: SegmentList) -> RefinedTranscript:
+def _run_adaptive(
+    ctx: PipelineContext,
+    transcript: Transcript,
+    segments: SegmentList,
+    progress=None,
+) -> RefinedTranscript:
     try:
-        return _run_single_call(ctx, transcript, segments)
+        result = _run_single_call(ctx, transcript, segments)
+        if progress is not None:
+            progress.update(len(segments.markers) - progress.n)
+        return result
     except Exception as exc:
         log.warning("refine single_call failed; falling back to batched: %s", exc)
-    return _run_batched(ctx, transcript, segments, fallback_serial=True)
+        progress_write(f"audio.refine: single_call failed; falling back to batched: {exc}")
+    return _run_batched(ctx, transcript, segments, fallback_serial=True, progress=progress)
 
 
 def _run_single_call(ctx: PipelineContext, transcript: Transcript, segments: SegmentList) -> RefinedTranscript:
@@ -117,21 +130,40 @@ def _run_single_call(ctx: PipelineContext, transcript: Transcript, segments: Seg
     return result
 
 
-def _run_batched(ctx: PipelineContext, transcript: Transcript, segments: SegmentList, fallback_serial: bool = False) -> RefinedTranscript:
+def _run_batched(
+    ctx: PipelineContext,
+    transcript: Transcript,
+    segments: SegmentList,
+    fallback_serial: bool = False,
+    progress=None,
+) -> RefinedTranscript:
     refined: list[RefinedSegment] = []
     batch_size = ctx.config.audio_pipeline.refine.batch_size
     for start in range(0, len(segments.markers), batch_size):
         batch_markers = segments.markers[start : start + batch_size]
+        progress_updated = False
         try:
             batch = _refine_batch(ctx, transcript, segments.markers, batch_markers)
             _validate_refined_segments(batch, batch_markers)
         except Exception as exc:
             if not fallback_serial:
                 raise
-            log.warning("refine batch %s-%s failed; falling back to serial: %s", batch_markers[0].id, batch_markers[-1].id, exc)
-            batch = _run_serial_segments(ctx, transcript, segments.markers, batch_markers)
+            log.warning(
+                "refine batch %s-%s failed; falling back to serial: %s",
+                batch_markers[0].id,
+                batch_markers[-1].id,
+                exc,
+            )
+            progress_write(
+                f"audio.refine: batch {batch_markers[0].id}-{batch_markers[-1].id} "
+                f"failed; falling back to serial: {exc}"
+            )
+            batch = _run_serial_segments(ctx, transcript, segments.markers, batch_markers, progress=progress)
+            progress_updated = True
         refined.extend(batch)
         _write_refined_segments(ctx, batch)
+        if progress is not None and not progress_updated:
+            progress.update(len(batch))
     result = RefinedTranscript(segments=refined, language=transcript.language, duration=transcript.duration)
     _validate_refined_transcript(result, transcript, segments.markers)
     return result
@@ -155,23 +187,33 @@ def _refine_batch(ctx: PipelineContext, transcript: Transcript, all_markers: lis
     return result.segments
 
 
-def _run_serial(ctx: PipelineContext, transcript: Transcript, markers: list[SegmentMarker]) -> RefinedTranscript:
+def _run_serial(ctx: PipelineContext, transcript: Transcript, markers: list[SegmentMarker], progress=None) -> RefinedTranscript:
     completed = _load_valid_completed(ctx, markers)
-    refined = completed + _run_serial_segments(ctx, transcript, markers, markers[len(completed) :])
+    if progress is not None and completed:
+        progress.update(len(completed))
+    refined = completed + _run_serial_segments(ctx, transcript, markers, markers[len(completed) :], progress=progress)
     result = RefinedTranscript(segments=refined, language=transcript.language, duration=transcript.duration)
     _validate_refined_transcript(result, transcript, markers)
     return result
 
 
-def _run_serial_segments(ctx: PipelineContext, transcript: Transcript, all_markers: list[SegmentMarker], markers: list[SegmentMarker]) -> list[RefinedSegment]:
+def _run_serial_segments(
+    ctx: PipelineContext,
+    transcript: Transcript,
+    all_markers: list[SegmentMarker],
+    markers: list[SegmentMarker],
+    progress=None,
+) -> list[RefinedSegment]:
     refined: list[RefinedSegment] = []
     for marker in markers:
         segment = _refine_one(ctx, transcript, all_markers, marker)
         _validate_refined(segment, marker)
         atomic_write_json(ctx.paths.refined_dir / f"{segment.id:04d}.json", segment)
         refined.append(segment)
+        if progress is not None:
+            progress.update(1)
         if ctx.debug and segment.id == 0:
-            print(f"refine debug first segment:\n{segment.cleaned_text[:1000]}")
+            progress_write(f"refine debug first segment:\n{segment.cleaned_text[:1000]}")
             refined[0] = read_json_file(ctx.paths.refined_dir / "0000.json", RefinedSegment)  # type: ignore[assignment]
     return refined
 

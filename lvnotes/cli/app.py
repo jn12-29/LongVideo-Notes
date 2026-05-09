@@ -15,6 +15,7 @@ from lvnotes.core.context import ArtifactBundle, PipelineContext
 from lvnotes.core.exceptions import CacheError, LVNotesError
 from lvnotes.core.logging import configure_logging
 from lvnotes.core.paths import PipelinePaths, build_paths
+from lvnotes.core.progress import progress_write
 from lvnotes.media.probe import probe_media
 from lvnotes.merge import assemble, outline, section, unify
 from lvnotes.visual_pipeline import cluster, describe, judge, sample, select
@@ -56,6 +57,7 @@ def main() -> None:
 @click.option("--debug", is_flag=True)
 def run_command(input_file: Path, config_path: Path | None, mm: bool, no_cache: bool, debug: bool) -> None:
     ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False)
+    _echo_run_header(ctx)
     if ctx.mode == "multimodal":
         _run_multimodal_upstream(ctx, debug)
         if not ctx.artifacts.audio.is_complete():
@@ -64,7 +66,7 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, no_cache: 
     else:
         _run_audio_upstream(ctx, debug)
     _run_stage_sequence(ctx, [unify.run, outline.run, section.run, assemble.run])
-    click.echo(f"Output: {ctx.paths.output_note_md}")
+    progress_write(f"Output: {ctx.paths.output_note_md}")
 
 
 @main.command("inspect")
@@ -113,11 +115,9 @@ def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> cl
         if stage_name == "describe" and not ctx.artifacts.audio.is_complete():
             raise click.ClickException(str(CacheError("visual describe requires completed audio refine stage; run refine first")))
         output = _run_stage(ctx, stage_run)
-        cache_hit = getattr(output, "cache_hit", False)
         paths = getattr(output, "output_paths", [])
-        click.echo(f"{stage_name}: {'cache hit' if cache_hit else 'done'}")
         for path in paths:
-            click.echo(path)
+            progress_write(str(path))
 
     return command
 
@@ -186,6 +186,9 @@ def _run_multimodal_upstream(ctx: PipelineContext, debug: bool) -> None:
 
 
 def _run_stage(ctx: PipelineContext, stage_run: StageRun) -> object:
+    label = _stage_label(stage_run)
+    progress_write(f"{label}: running")
+    log.info("stage started: %s input_hash=%s", label, ctx.input_hash)
     try:
         output = stage_run(ctx)
     except LVNotesError as exc:
@@ -194,10 +197,31 @@ def _run_stage(ctx: PipelineContext, stage_run: StageRun) -> object:
     except Exception:
         log.exception("unexpected stage failure")
         raise
-    stage_name = getattr(output, "stage_name", stage_run.__module__)
+    stage_name = getattr(output, "stage_name", label)
     cache_hit = getattr(output, "cache_hit", False)
-    click.echo(f"{stage_name}: {'cache hit' if cache_hit else 'done'}")
+    status = "cache hit" if cache_hit else "done"
+    log.info("stage %s: %s stage_name=%s input_hash=%s", status, label, stage_name, ctx.input_hash)
+    progress_write(f"{label}: {status}")
     return output
+
+
+def _stage_label(stage_run: StageRun) -> str:
+    module_name = stage_run.__module__
+    for prefix, replacement in (
+        ("lvnotes.audio_pipeline.", "audio."),
+        ("lvnotes.visual_pipeline.", "visual."),
+        ("lvnotes.merge.", "merge."),
+    ):
+        if module_name.startswith(prefix):
+            return replacement + module_name.removeprefix(prefix).split(".", 1)[0]
+    return module_name
+
+
+def _echo_run_header(ctx: PipelineContext) -> None:
+    progress_write(f"Input: {ctx.source_path}")
+    progress_write(f"Mode: {ctx.mode}")
+    progress_write(f"Cache: {'disabled' if ctx.no_cache else 'enabled'}")
+    progress_write("")
 
 
 def _inspect_path(ctx: PipelineContext, namespace: str, stage: str) -> Path:

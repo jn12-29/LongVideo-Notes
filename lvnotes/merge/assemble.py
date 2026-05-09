@@ -13,6 +13,8 @@ from lvnotes.merge._common import cache_output, cached_output, read_blocks, read
 log = logging.getLogger(__name__)
 _REF_RE = re.compile(r"\[\[REF:(\d+)\]\]")
 _TS_RE = re.compile(r"\[\[TS:(\d+(?:\.\d+)?)(?:-\d+(?:\.\d+)?)?\]\]")
+_RENDERED_TS_PATTERN = r"(?:\[\d{2}:\d{2}:\d{2}\]\([^\)\n]+\)|\[\d{2}:\d{2}:\d{2}\](?!\())"
+_RENDERED_TS_RE = re.compile(_RENDERED_TS_PATTERN)
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -60,10 +62,14 @@ def _strip_section_heading(text: str, chapter_title: str) -> str:
     if not lines:
         return ""
     heading = lines[0].strip()
-    if heading.startswith("#"):
-        title = heading.lstrip("#").strip()
+    match = re.match(r"^(#{1,2})\s+(.*)$", heading)
+    if match:
+        title = match.group(2).strip()
         if title == chapter_title or title.endswith(f" {chapter_title}"):
             return "\n".join(lines[1:]).lstrip()
+    match = re.match(r"^(#{3,4})\s+(.*)$", heading)
+    if match and match.group(2).strip() == chapter_title:
+        return "\n".join(lines[1:]).lstrip()
     return "\n".join(lines)
 
 
@@ -122,7 +128,27 @@ def _render_timestamps(ctx: PipelineContext, text: str) -> str:
 
 
 def _normalize_markdown_spacing(text: str) -> str:
-    text = re.sub(r"(\[\d{2}:\d{2}:\d{2}\])\s*([。！？；，、,.!?;:])", r"\2\1", text)
+    return "\n".join(_normalize_markdown_line(line.rstrip()) for line in text.splitlines())
+
+
+def _normalize_markdown_line(line: str) -> str:
+    if line.lstrip().startswith("#"):
+        return line
+    text = _normalize_single_timestamp_line(line)
+    text = re.sub(rf"({_RENDERED_TS_PATTERN})\s*([。！？；，、,.!?;:])", r"\2\1", text)
     text = re.sub(r" +([。！？；，、,.!?;:])", r"\1", text)
-    text = re.sub(r"(\[\d{2}:\d{2}:\d{2}\])(?!\s|$)", r"\1 ", text)
-    return "\n".join(line.rstrip() for line in text.splitlines())
+    text = re.sub(rf"({_RENDERED_TS_PATTERN})(?!\s|$)", r"\1 ", text)
+    return text
+
+
+def _normalize_single_timestamp_line(line: str) -> str:
+    if line.lstrip().startswith("#"):
+        return line
+    matches = list(_RENDERED_TS_RE.finditer(line))
+    if len(matches) != 1 or matches[0].start() == 0:
+        return line
+    timestamp = matches[0].group(0)
+    without_timestamp = (line[: matches[0].start()] + line[matches[0].end() :]).strip()
+    if not without_timestamp:
+        return timestamp
+    return f"{timestamp} {without_timestamp}"

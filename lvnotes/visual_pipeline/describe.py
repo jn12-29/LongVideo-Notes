@@ -8,6 +8,7 @@ from lvnotes.core.context import PipelineContext
 from lvnotes.core.exceptions import CacheError, LLMError
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.paths import resolve_visual_image_path
+from lvnotes.core.progress import progress_iter
 from lvnotes.core.schemas import VisualDescription, VisualDescriptionList
 from lvnotes.llm import ImagePart, LLMMessage, LLMRequestOptions, TextPart, complete_json, for_task
 
@@ -32,7 +33,8 @@ def run(ctx: PipelineContext) -> StageOutput:
         if cached is not None:
             return cached
     descriptions = []
-    for selection, audio_text in zip(selections, audio_texts):
+    items = list(zip(selections, audio_texts))
+    for selection, audio_text in progress_iter(items, desc="visual.describe", total=len(items), unit="selection"):
         image_path = resolve_visual_image_path(ctx.paths, selection.image_source_path)
         prompt = Template(template.read_text(encoding="utf-8")).render(selection=selection, audio_text=audio_text)
         result = complete_json(for_task(ctx.config, "slide_describe"), [LLMMessage(role="user", content=[TextPart(text=prompt), ImagePart(path=image_path, mime_type="image/png")])], _DescriptionOnly, LLMRequestOptions(temperature=0.2), 1)

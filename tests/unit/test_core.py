@@ -66,7 +66,12 @@ def test_chapter_anchor_keeps_cjk_and_prefix() -> None:
 
 def test_assemble_strips_generated_section_heading() -> None:
     assert _strip_section_heading("## 创新主题与论述\n\n正文", "创新主题与论述") == "正文"
-    assert _strip_section_heading("### 3. 国际竞争与自主创新\n正文", "国际竞争与自主创新") == "正文"
+    assert _strip_section_heading("# 3. 国际竞争与自主创新\n正文", "国际竞争与自主创新") == "正文"
+    assert _strip_section_heading("## 3. 国际竞争与自主创新\n正文", "国际竞争与自主创新") == "正文"
+    assert _strip_section_heading("### 3. 国际竞争与自主创新\n正文", "国际竞争与自主创新") == "### 3. 国际竞争与自主创新\n正文"
+    assert _strip_section_heading("### 国际竞争与自主创新\n正文", "国际竞争与自主创新") == "正文"
+    assert _strip_section_heading("### 内部小标题\n正文", "章节标题") == "### 内部小标题\n正文"
+    assert _strip_section_heading("#### 更细小标题\n正文", "章节标题") == "#### 更细小标题\n正文"
 
 
 def test_render_refs_drops_current_chapter_self_refs() -> None:
@@ -85,7 +90,14 @@ def test_normalize_markdown_spacing_cleans_ref_and_timestamp_spacing() -> None:
     assert _normalize_markdown_spacing("[00:05:32]那么是不是。 ") == "[00:05:32] 那么是不是。"
     assert _normalize_markdown_spacing("当前 ，前文。") == "当前，前文。"
     assert _normalize_markdown_spacing("[00:01:45]  \n正文  ") == "[00:01:45]\n正文"
-    assert _normalize_markdown_spacing("结论[00:07:05] 。") == "结论。[00:07:05]"
+    assert _normalize_markdown_spacing("结论[00:07:05] 。") == "[00:07:05] 结论。"
+    assert _normalize_markdown_spacing("结论。[00:07:05]") == "[00:07:05] 结论。"
+    assert _normalize_markdown_spacing("正文。[00:07:05](https://example.com/watch?t=425)") == "[00:07:05](https://example.com/watch?t=425) 正文。"
+    assert _normalize_markdown_spacing("[00:01:00](u)正文") == "[00:01:00](u) 正文"
+    assert _normalize_markdown_spacing("A。[00:01:00](u1) B。[00:02:00](u2)") == "A。[00:01:00](u1) B。[00:02:00](u2)"
+    assert _normalize_markdown_spacing("### 小标题[00:07:05]") == "### 小标题[00:07:05]"
+    assert _normalize_markdown_spacing("### 小标题[00:07:05]正文") == "### 小标题[00:07:05]正文"
+    assert _normalize_markdown_spacing("### 小标题[00:07:05](https://example.com/watch?t=425)正文") == "### 小标题[00:07:05](https://example.com/watch?t=425)正文"
 
 
 def test_render_timestamps_accepts_range_marker_start() -> None:
