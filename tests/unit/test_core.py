@@ -3,13 +3,17 @@ from pathlib import Path
 
 import pytest
 
-from lvnotes.core.cache import build_cache_key, hash_json
+from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json, read_cache_manifest
+from lvnotes.core.config import AppConfig
+from lvnotes.core.context import ArtifactBundle, PipelineContext
+from lvnotes.core.paths import build_paths, make_output_stem, make_timestamped_output_path
 from lvnotes.core.serialization import from_jsonable, to_jsonable
 from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
-from lvnotes.core.schemas.merge import Chapter, Outline
+from lvnotes.core.schemas.merge import Chapter, ContentBlock, Outline
 from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, format_mmss, parse_ts_marker, render_timestamp
 from lvnotes.core.transcript import slice_transcript_text
+from lvnotes.merge import assemble
 from lvnotes.merge.assemble import _normalize_markdown_spacing, _render_refs, _strip_section_heading
 from lvnotes.merge.outline import _validate_outline
 
@@ -62,6 +66,63 @@ def test_invalid_timestamp_marker_raises() -> None:
 def test_chapter_anchor_keeps_cjk_and_prefix() -> None:
     assert make_chapter_anchor(3, " 第一章: 概念 / Demo ").startswith("chapter-3-")
     assert "第一章" in make_chapter_anchor(3, " 第一章: 概念 / Demo ")
+
+
+def test_output_stem_preserves_cjk_and_removes_unsafe_characters() -> None:
+    assert make_output_stem(Path("20260420-金涌院士报告前10分钟音频.mp3")) == "20260420-金涌院士报告前10分钟音频"
+    assert make_output_stem(Path(" Demo: A? (v1).mp4 ")) == "Demo-A-v1"
+    assert make_output_stem(Path("???.mp4")) == "note"
+
+
+def test_build_paths_uses_source_named_output_note() -> None:
+    paths = build_paths(Path("/tmp/20260420-金涌院士报告前10分钟音频.mp3"), Path("cache"), Path("output"), "abc")
+
+    assert paths.output_note_md == Path("output/20260420-金涌院士报告前10分钟音频.md")
+    assert make_timestamped_output_path(paths.output_note_md, "20260509-085423") == Path("output/20260420-金涌院士报告前10分钟音频-20260509-085423.md")
+
+
+def test_assemble_writes_latest_and_timestamped_outputs(tmp_path: Path) -> None:
+    ctx = _assemble_ctx(tmp_path)
+
+    first = assemble.run(ctx)
+    second = assemble.run(ctx)
+
+    archived = [path for path in first.output_paths if path.name.startswith("讲座-202")]
+    assert ctx.paths.output_note_md == tmp_path / "output" / "讲座.md"
+    assert ctx.paths.output_note_md.exists()
+    assert ctx.paths.cache_note_md.exists()
+    assert archived and archived[0].exists()
+    assert len(second.output_paths) == 3
+    assert second.cache_hit is True
+    assert second.output_paths[1].exists()
+    manifest = read_cache_manifest(ctx.paths.cache_note_md.with_name("note.md.cache.json"))
+    assert manifest.output_paths == [ctx.paths.output_note_md, ctx.paths.cache_note_md]
+
+
+def _assemble_ctx(tmp_path: Path) -> PipelineContext:
+    source = tmp_path / "讲座.mp3"
+    source.write_bytes(b"audio")
+    paths = build_paths(source, tmp_path / "cache", tmp_path / "output", "inputhash")
+    for directory in (paths.run_dir, paths.sections_dir, paths.output_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(paths.outline_json, Outline([Chapter(1, "开场", "summary", 0, 0)]))
+    atomic_write_json(paths.content_blocks_json, [ContentBlock(0, 0.0, 1.0, "topic", "正文。", "summary", [], [])])
+    (paths.sections_dir / "001.md").write_text("[[TS:0.000]] 正文。\n", encoding="utf-8")
+    return PipelineContext(source, "inputhash", "audio_only", _assemble_config(), paths, ArtifactBundle(audio=type("Audio", (), {"get_duration": lambda self: 1.0})()))
+
+
+def _assemble_config() -> AppConfig:
+    return AppConfig.model_validate(
+        {
+            "llm": {
+                "profiles": {
+                    "main": {"provider": "openai_compatible_chat", "base_url": "http://localhost:8000/v1", "api_key_env": None, "model": "test"},
+                    "vlm": {"provider": "openai_compatible_chat", "base_url": "http://localhost:8000/v1", "api_key_env": None, "model": "test", "capabilities": ["vision"]},
+                }
+            },
+            "tasks": {"segment": "main", "refine": "main", "outline": "main", "section": "main", "slide_judge": "vlm", "slide_describe": "main"},
+        }
+    )
 
 
 def test_assemble_strips_generated_section_heading() -> None:

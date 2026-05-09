@@ -272,7 +272,7 @@ def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> P
 - `source_path` 是本次运行解析后的绝对本地视频或音频输入路径。schema、frontmatter、URL 模板和日志中需要表达输入文件时统一使用这个名字。
 - `run_dir == cache_dir / input_hash`,只存中间产物和 debug copy。
 - `cache_note_md == cache/{input_hash}/note.md`,是 assemble 生成的调试副本或缓存副本,不是最终用户产物。
-- `output_note_md == output_dir / "note.md"`,是最终用户产物。
+- `output_note_md == output_dir / "<source-stem>.md"`,是 latest 最终用户产物；assemble 同时写出 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
 - visual 帧文件存放在 `visual_frames_dir == cache/{input_hash}/visual/frames/`。
 - visual schema 中的 `image_source_path` 保存为相对 `visual_frames_dir` 的路径,例如 `000123.000.png` 或子目录下的 `segment-001/000123.000.png`。
 - `resolve_visual_image_path()` 把 schema 内的相对 `image_source_path` 解析为绝对帧文件路径,返回 `paths.visual_frames_dir / image_source_path` 归一化后的路径。
@@ -380,7 +380,7 @@ Manifest 路径规则:
 - `visual_sample` stage 使用 `visual/sample.json.cache.json`,manifest.output_paths 包含 `visual/sample.json` 和采样帧文件列表。
 - `refine` stage 的最终 manifest 使用 `refined_transcript.json.cache.json`;段级 `refined/{seg_id:04d}.json` 是断点续跑产物,不单独表达 stage cache 命中。
 - `section` stage 使用 per-chapter manifest:`sections/{chapter_id:03d}.md.cache.json`。
-- `assemble` stage 使用 `cache/{input_hash}/note.md.cache.json`;`output_dir/note.md` 是最终用户产物,不作为 manifest 位置。
+- `assemble` stage 使用 `cache/{input_hash}/note.md.cache.json`;`output_dir/<source-stem>.md` 和带时间戳归档文件是最终用户产物,不作为 manifest 位置。
 
 命中规则:
 
@@ -761,7 +761,7 @@ refined = read_json(ctx.paths.refined_transcript_json)
 | `run_dir` | `cache/{input_hash}` |
 | `output_dir` | 最终用户产物目录 |
 | `cache_note_md` | `cache/{input_hash}/note.md`,调试或缓存副本 |
-| `output_note_md` | `output_dir/note.md`,最终用户产物 |
+| `output_note_md` | `output_dir/<source-stem>.md`,latest 最终用户产物 |
 | `visual_frames_dir` | `cache/{input_hash}/visual/frames/` |
 
 目录布局:
@@ -790,12 +790,14 @@ cache/{input_hash}/
 └── note.md
 
 output_dir/
-└── note.md
+├── <source-stem>.md
+└── <source-stem>-YYYYMMDD-HHMMSS.md
 ```
 
 规则:
 
-- `output_dir/note.md` 是唯一最终用户产物。
+- `output_dir/<source-stem>.md` 是 latest 最终用户产物。
+- `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 是每次 assemble 写出的归档用户产物。
 - `cache/{input_hash}/note.md` 只作为中间产物或 debug copy 存在。
 - `source_path` 统一表示解析后的绝对本地输入路径,不区分视频和音频。配置、schema 和上下文中不要使用带媒体类型假设的字段名。
 - `image_source_path` 在 visual 与 merge schema 中保存为相对 `cache/{input_hash}/visual/frames/` 的路径。

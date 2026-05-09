@@ -216,7 +216,7 @@ lvnotes assemble <input-file> --no-cache
 
 合并 stage 命令的 `--mm` 语义与 `run --mm` 一致:视频输入且显式传 `--mm` 时创建带 `VisualArtifacts` 的 context;未传 `--mm` 时按纯音频模式创建 context。音频输入传 `--mm` 仍报错。这样 assemble frontmatter 的 `mode` 始终来自本次 CLI 模式。
 
-`assemble --no-cache` 用于用户编辑 `sections/*.md` 后,跳过 assemble 缓存,重读 sections 并重新生成 `note.md`。不应重跑 section LLM。
+`assemble --no-cache` 用于用户编辑 `sections/*.md` 后,跳过 assemble 缓存,重读 sections 并重新生成 latest 与带时间戳归档笔记。不应重跑 section LLM。
 
 ---
 
@@ -245,7 +245,7 @@ CLI 通过 `media/probe.py` 识别输入是音频还是视频,不直接调用 ff
 
 ### 4.3 模式写入最终元信息
 
-`assemble` 生成 `note.md` frontmatter 时写入:
+`assemble` 生成最终 Markdown frontmatter 时写入:
 
 ```yaml
 mode: audio_only
@@ -410,7 +410,10 @@ visual.sample: done
 audio.transcribe: running
 audio.transcribe:  42%|████▏     | 1520/3600s
 audio.transcribe: done
-Output: output/note.md
+Output:
+output/lecture.md
+output/lecture-20260509-085423.md
+cache/abc123/note.md
 ```
 
 CLI 始终显示 stage 级 `running` / `done` / `cache hit`。可计数的长耗时任务使用 `tqdm` 进度条:ASR 按音频秒数近似推进,refine 按 segment 推进,visual describe 按 selection 推进,merge section 按 chapter job 推进。非 TTY 输出禁用动态进度条,只保留普通状态行和日志。

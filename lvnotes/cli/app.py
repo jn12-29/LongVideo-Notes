@@ -65,8 +65,11 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, no_cache: 
         _run_stage(ctx, describe.run)
     else:
         _run_audio_upstream(ctx, debug)
-    _run_stage_sequence(ctx, [unify.run, outline.run, section.run, assemble.run])
-    progress_write(f"Output: {ctx.paths.output_note_md}")
+    assemble_output = _run_stage_sequence(ctx, [unify.run, outline.run, section.run, assemble.run])
+    output_paths = getattr(assemble_output, "output_paths", [ctx.paths.output_note_md])
+    progress_write("Output:")
+    for path in output_paths:
+        progress_write(str(path))
 
 
 @main.command("inspect")
@@ -163,9 +166,11 @@ def _ensure_runtime_dirs(paths: PipelinePaths) -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
-def _run_stage_sequence(ctx: PipelineContext, stages: list[StageRun]) -> None:
+def _run_stage_sequence(ctx: PipelineContext, stages: list[StageRun]) -> object | None:
+    output = None
     for stage_run in stages:
-        _run_stage(ctx, stage_run)
+        output = _run_stage(ctx, stage_run)
+    return output
 
 
 def _run_audio_upstream(ctx: PipelineContext, debug: bool) -> None:

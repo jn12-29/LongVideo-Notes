@@ -28,6 +28,7 @@ lvnotes assemble <input-file> --no-cache
 
 默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
 运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。
+最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
 
 CLI 默认查找当前目录下的 `config.yaml`，也可通过 `--config <path>` 指定配置文件。可从 `config.example.yaml` 复制并按本地 LLM / ASR 环境调整。
 LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 profile 的任务都会继承。

@@ -44,7 +44,7 @@
 
 ### 2.3 输出
 
-- 一份 Markdown 笔记 (`note.md`),含:
+- Markdown 笔记：`output_dir/<source-stem>.md` 作为 latest 文件，`output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档，含:
   - 自动生成的章节结构
   - 每章正文(清洗后的讲解内容 + 视觉内容描述)
   - 关键画面截图(多模模式下)
@@ -107,7 +107,7 @@ Stage 2 用滑动窗口聚类(双阈值 + 跟段首累积比对),把相邻渐变
 | unify    | 纯逻辑     | `ContentBlock` 序列(按时间排序,含转录 + 可选视觉信息) |
 | outline  | LLM        | 章节结构 (`outline.json`)                             |
 | section  | LLM (并发) | 每章 Markdown (`sections/{chapter_id:03d}.md`),保留内部 marker |
-| assemble | 纯逻辑     | 最终 `output_dir/note.md`,marker 替换为人类可读形态          |
+| assemble | 纯逻辑     | 最终 `output_dir/<source-stem>.md` 与 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md`,marker 替换为人类可读形态          |
 
 `ContentBlock` 是统一抽象:纯音频模式下所有 block 没有视觉字段,多模模式下有视觉的 block 含画面+描述。下游 outline / section 不区分两种模式。
 
@@ -237,7 +237,7 @@ longvideo-notes/
         ├── outline.json
         ├── sections/
         │   └── {chapter_id:03d}.md
-        └── note.md              (cache 副本;最终产物写入 output_dir/note.md)
+        └── note.md              (cache 副本;最终产物写入 output_dir/<source-stem>.md 和带时间戳归档文件)
 ```
 
 ---
@@ -422,7 +422,7 @@ segments = complete_json(client, messages, SegmentList, options)
 ```yaml
 project:
   cache_dir: ./cache
-  output_dir: ./output # 最终 note.md 写入这里;cache 内 note.md 作为可复查的中间产物
+  output_dir: ./output # 最终 latest 与带时间戳归档笔记写入这里;cache 内 note.md 作为可复查的中间产物
 
 llm:
   profiles:

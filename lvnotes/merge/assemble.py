@@ -4,6 +4,7 @@ import re
 
 from lvnotes.core.cache import atomic_write_text, build_cache_key, hash_file, hash_json
 from lvnotes.core.context import PipelineContext
+from lvnotes.core.paths import make_timestamped_output_path
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, render_timestamp
@@ -23,24 +24,32 @@ def run(ctx: PipelineContext) -> StageOutput:
     section_paths = [ctx.paths.sections_dir / f"{chapter.id:03d}.md" for chapter in outline.chapters]
     sections_hash = hash_json([hash_file(path) for path in section_paths])
     cache_key = build_cache_key("assemble", {"outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash, "config": hash_json(ctx.config.merge.assemble)})
-    output_paths = [ctx.paths.output_note_md, ctx.paths.cache_note_md]
+    generated_at = datetime.now(timezone.utc)
+    timestamped_output = make_timestamped_output_path(ctx.paths.output_note_md, _filename_timestamp(generated_at))
+    output_paths = [ctx.paths.output_note_md, timestamped_output, ctx.paths.cache_note_md]
+    cached_output_paths = [ctx.paths.output_note_md, ctx.paths.cache_note_md]
     if not ctx.no_cache:
-        cached = cached_output("assemble", output_paths, cache_key, manifest_output_path=ctx.paths.cache_note_md)
+        cached = cached_output("assemble", cached_output_paths, cache_key, manifest_output_path=ctx.paths.cache_note_md)
         if cached is not None:
-            return cached
+            note = ctx.paths.cache_note_md.read_text(encoding="utf-8")
+            atomic_write_text(ctx.paths.output_note_md, note)
+            atomic_write_text(timestamped_output, note)
+            return StageOutput("assemble", output_paths, True, hash_json(note), {**cached.metadata, "archived_output": str(timestamped_output)})
 
-    note = _assemble_note(ctx, outline, blocks, section_paths)
+    note = _assemble_note(ctx, outline, blocks, section_paths, generated_at)
     atomic_write_text(ctx.paths.cache_note_md, note)
     atomic_write_text(ctx.paths.output_note_md, note)
-    return cache_output("assemble", output_paths, cache_key, {"outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash}, hash_json(ctx.config.merge.assemble), None, manifest_output_path=ctx.paths.cache_note_md)
+    atomic_write_text(timestamped_output, note)
+    output = cache_output("assemble", cached_output_paths, cache_key, {"outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash}, hash_json(ctx.config.merge.assemble), None, manifest_output_path=ctx.paths.cache_note_md)
+    return StageOutput(output.stage_name, output_paths, output.cache_hit, output.content_hash, {**output.metadata, "archived_output": str(timestamped_output)})
 
 
-def _assemble_note(ctx: PipelineContext, outline, blocks, section_paths: list) -> str:
+def _assemble_note(ctx: PipelineContext, outline, blocks, section_paths: list, generated_at: datetime) -> str:
     anchors = {chapter.id: make_chapter_anchor(chapter.id, chapter.title) for chapter in outline.chapters}
     block_to_chapter = {block_id: chapter.id for chapter in outline.chapters for block_id in range(chapter.block_id_start, chapter.block_id_end + 1)}
     parts: list[str] = []
     if ctx.config.merge.assemble.include_metadata:
-        parts.append(_frontmatter(ctx))
+        parts.append(_frontmatter_at(ctx, generated_at))
     title = ctx.config.merge.assemble.top_title or ctx.source_path.stem
     parts.append(f"# {title}\n")
     if ctx.config.merge.assemble.include_toc:
@@ -74,6 +83,10 @@ def _strip_section_heading(text: str, chapter_title: str) -> str:
 
 
 def _frontmatter(ctx: PipelineContext) -> str:
+    return _frontmatter_at(ctx, datetime.now(timezone.utc))
+
+
+def _frontmatter_at(ctx: PipelineContext, generated_at: datetime) -> str:
     duration = ctx.artifacts.audio.get_duration()
     slide_judge = ctx.config.tasks["slide_judge"] if ctx.mode == "multimodal" else "null"
     slide_describe = ctx.config.tasks["slide_describe"] if ctx.mode == "multimodal" else "null"
@@ -81,7 +94,7 @@ def _frontmatter(ctx: PipelineContext) -> str:
         "---\n"
         f"source_path: {ctx.source_path}\n"
         f"duration: {format_hms(duration)}\n"
-        f"generated_at: {datetime.now(timezone.utc).isoformat()}\n"
+        f"generated_at: {generated_at.isoformat()}\n"
         f"mode: {ctx.mode}\n"
         "llm_profiles:\n"
         f"  segment: {ctx.config.tasks['segment']}\n"
@@ -92,6 +105,10 @@ def _frontmatter(ctx: PipelineContext) -> str:
         f"  slide_describe: {slide_describe}\n"
         "---\n"
     )
+
+
+def _filename_timestamp(generated_at: datetime) -> str:
+    return generated_at.astimezone().strftime("%Y%m%d-%H%M%S")
 
 
 def _render_refs(text: str, block_to_chapter: dict[int, int], anchors: dict[int, str], *, current_chapter_id: int | None = None) -> str:
