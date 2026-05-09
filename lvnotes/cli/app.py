@@ -23,6 +23,12 @@ from lvnotes.visual_pipeline import cluster, describe, judge, sample, select
 log = logging.getLogger(__name__)
 StageRun = Callable[[PipelineContext], object]
 
+
+class OrderedGroup(click.Group):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return list(self.commands)
+
+
 AUDIO_STAGES: dict[str, StageRun] = {
     "extract": extract.run,
     "transcribe": transcribe.run,
@@ -43,13 +49,25 @@ MERGE_STAGES: dict[str, StageRun] = {
     "assemble": assemble.run,
 }
 
-
-@click.group()
+@click.group(cls=OrderedGroup)
 def main() -> None:
-    """LongVideo-Notes command line interface."""
+    """Generate structured Markdown notes from long video or audio.
+
+    \b
+    Recommended workflow:
+      lvnotes run <input-file>
+      lvnotes run <input-file> --mm
+      lvnotes inspect audio refined <input-file>
+      lvnotes assemble <input-file> --no-cache
+
+    \b
+    Modes:
+      Audio files and video files without --mm run in audio-only mode.
+      Video files with --mm run in multimodal mode.
+    """
 
 
-@main.command("run")
+@main.command("run", short_help="Generate a Markdown note end to end.")
 @click.argument("input_file", type=click.Path(path_type=Path))
 @click.option("--config", "config_path", type=click.Path(path_type=Path), default=None)
 @click.option("--mm", is_flag=True, help="Enable multimodal mode for video input.")
@@ -57,6 +75,7 @@ def main() -> None:
 @click.option("--no-cache", is_flag=True)
 @click.option("--debug", is_flag=True)
 def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, no_cache: bool, debug: bool) -> None:
+    """Generate a Markdown note end to end."""
     ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False, head_minutes=head_minutes, create_trim=True)
     _echo_run_header(ctx)
     if ctx.mode == "multimodal":
@@ -73,7 +92,7 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minut
         progress_write(str(path))
 
 
-@main.command("inspect")
+@main.command("inspect", short_help="Inspect existing artifacts without running stages.")
 @click.argument("namespace", type=click.Choice(["audio", "visual", "merge"]))
 @click.argument("stage")
 @click.argument("input_file", type=click.Path(path_type=Path))
@@ -83,6 +102,7 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minut
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--paths", "paths_only", is_flag=True)
 def inspect_command(namespace: str, stage: str, input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, as_json: bool, paths_only: bool) -> None:
+    """Inspect existing artifacts without running stages."""
     ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False, head_minutes=head_minutes, create_trim=False)
     path = _inspect_path(ctx, namespace, stage)
     if paths_only:
@@ -109,7 +129,11 @@ def _register_stage_commands() -> None:
 
 
 def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> click.Command:
-    @click.command(name=stage_name)
+    @click.command(
+        name=stage_name,
+        help=_stage_help(stage_name, require_mm),
+        short_help=_stage_short_help(stage_name, require_mm),
+    )
     @click.argument("input_file", type=click.Path(path_type=Path))
     @click.option("--config", "config_path", type=click.Path(path_type=Path), default=None)
     @click.option("--mm", is_flag=True)
@@ -126,6 +150,21 @@ def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> cl
             progress_write(str(path))
 
     return command
+
+
+def _stage_short_help(stage_name: str, require_mm: bool) -> str:
+    if stage_name in AUDIO_STAGES:
+        return f"Run audio {stage_name} stage."
+    if require_mm:
+        return f"Run visual {stage_name} stage; requires --mm."
+    return f"Run merge {stage_name} stage."
+
+
+def _stage_help(stage_name: str, require_mm: bool) -> str:
+    help_text = _stage_short_help(stage_name, require_mm)
+    if require_mm:
+        return f"{help_text} Video input must be run with --mm."
+    return help_text
 
 
 def _make_context(

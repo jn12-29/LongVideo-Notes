@@ -546,11 +546,27 @@ Import 规则:
 CLI 验收覆盖：
 
 - `python -m lvnotes --help` 与 `lvnotes --help` 入口一致。
+- 顶层 help 输出推荐工作流、模式规则和常用示例。
+- 顶层 help 的 Commands 区按使用顺序展示 `run`、`inspect`、音频 stage、多模 stage、合并 stage,并为每个命令展示简短用途。
 - `lvnotes run <input-file>` 走纯音频路径。
 - `lvnotes run <video> --mm` 走多模路径。
 - 每个 stage 命令调用同名 stage 的 `run(ctx)`。
 - `inspect` 只读取产物，不触发计算。
 - `--no-cache`、`--debug`、`--mm` 的语义符合本文规则。
+
+顶层 help 指导内容：
+
+```text
+Recommended workflow:
+  lvnotes run <input-file>
+  lvnotes run <input-file> --mm
+  lvnotes inspect audio refined <input-file>
+  lvnotes assemble <input-file> --no-cache
+
+Modes:
+  Audio files and video files without --mm run in audio-only mode.
+  Video files with --mm run in multimodal mode.
+```
 
 ---
 
