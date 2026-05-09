@@ -143,7 +143,7 @@ lvnotes inspect merge note <input-file> --head-minutes 10 --paths
 
 支持选项:
 
-- `--json`:输出原始 JSON 或 schema 序列化结果
+- `--json`:输出原始产物内容
 - `--paths`:只输出对应产物路径
 - `--head-minutes <minutes>`:查看已存在开头片段对应的产物;不会创建片段文件
 
@@ -407,9 +407,8 @@ section 的 `--no-cache` 语义与 per-chapter cache 一致:跳过每章 manifes
 ```text
 stage: audio refined
 input_hash: abc123
-segments: 28
-duration: 01:42:13
 path: cache/abc123/refined_transcript.json
+size_bytes: 12345
 ```
 
 默认不打印完整 raw transcript、完整 refined text、完整 prompt、完整 section markdown 或图片内容。
@@ -546,7 +545,7 @@ Import 规则:
 CLI 验收覆盖：
 
 - `python -m lvnotes --help` 与 `lvnotes --help` 入口一致。
-- 顶层 help 输出推荐工作流、模式规则和常用示例。
+- 顶层 help 输出推荐工作流、模式规则、常用示例和常用选项。
 - 顶层 help 的 Commands 区按使用顺序展示 `run`、`inspect`、音频 stage、多模 stage、合并 stage,并为每个命令展示简短用途。
 - `lvnotes run <input-file>` 走纯音频路径。
 - `lvnotes run <video> --mm` 走多模路径。
@@ -560,12 +559,23 @@ CLI 验收覆盖：
 Recommended workflow:
   lvnotes run <input-file>
   lvnotes run <input-file> --mm
+  lvnotes run <input-file> --head-minutes 10
   lvnotes inspect audio refined <input-file>
+  lvnotes inspect merge note <input-file> --paths
+  lvnotes inspect merge note <input-file> --head-minutes 10 --paths
   lvnotes assemble <input-file> --no-cache
 
 Modes:
   Audio files and video files without --mm run in audio-only mode.
   Video files with --mm run in multimodal mode.
+
+Useful options:
+  --head-minutes N  Process only the first N minutes; inspect reads an existing trim.
+  --config PATH     Load a specific config file.
+  --no-cache        Recompute stages run by commands that support it.
+  --debug           Enable refine review flow during refine.
+  --paths           Print only the artifact path in inspect.
+  --json            Print raw artifact content in inspect.
 ```
 
 ---

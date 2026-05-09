@@ -57,13 +57,25 @@ def main() -> None:
     Recommended workflow:
       lvnotes run <input-file>
       lvnotes run <input-file> --mm
+      lvnotes run <input-file> --head-minutes 10
       lvnotes inspect audio refined <input-file>
+      lvnotes inspect merge note <input-file> --paths
+      lvnotes inspect merge note <input-file> --head-minutes 10 --paths
       lvnotes assemble <input-file> --no-cache
 
     \b
     Modes:
       Audio files and video files without --mm run in audio-only mode.
       Video files with --mm run in multimodal mode.
+
+    \b
+    Useful options:
+      --head-minutes N  Process only the first N minutes; inspect reads an existing trim.
+      --config PATH     Load a specific config file.
+      --no-cache        Recompute stages run by commands that support it.
+      --debug           Enable refine review flow during refine.
+      --paths           Print only the artifact path in inspect.
+      --json            Print raw artifact content in inspect.
     """
 
 
@@ -75,7 +87,11 @@ def main() -> None:
 @click.option("--no-cache", is_flag=True)
 @click.option("--debug", is_flag=True)
 def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, no_cache: bool, debug: bool) -> None:
-    """Generate a Markdown note end to end."""
+    """Generate a Markdown note end to end.
+
+    Use --mm for multimodal video runs. Use --head-minutes N for a quick trial
+    on the first N minutes. Use --no-cache to recompute all stages run by run.
+    """
     ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False, head_minutes=head_minutes, create_trim=True)
     _echo_run_header(ctx)
     if ctx.mode == "multimodal":
@@ -102,7 +118,11 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minut
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--paths", "paths_only", is_flag=True)
 def inspect_command(namespace: str, stage: str, input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, as_json: bool, paths_only: bool) -> None:
-    """Inspect existing artifacts without running stages."""
+    """Inspect existing artifacts without running stages.
+
+    Use --paths to print only the artifact path and --json to print raw artifact content.
+    With --head-minutes N, inspect reads the existing first-N-minutes trim.
+    """
     ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False, head_minutes=head_minutes, create_trim=False)
     path = _inspect_path(ctx, namespace, stage)
     if paths_only:
@@ -161,7 +181,7 @@ def _stage_short_help(stage_name: str, require_mm: bool) -> str:
 
 
 def _stage_help(stage_name: str, require_mm: bool) -> str:
-    help_text = _stage_short_help(stage_name, require_mm)
+    help_text = f"{_stage_short_help(stage_name, require_mm)} Supports --head-minutes N and --no-cache."
     if require_mm:
         return f"{help_text} Video input must be run with --mm."
     return help_text
