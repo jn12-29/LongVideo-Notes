@@ -232,6 +232,7 @@ def _ensure_runtime_dirs(paths: PipelinePaths) -> None:
         paths.audio_dir,
         paths.visual_dir,
         paths.visual_frames_dir,
+        paths.debug_dir,
         paths.refined_dir,
         paths.sections_dir,
         paths.output_dir,

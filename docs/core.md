@@ -237,6 +237,7 @@ class PipelinePaths:
     audio_dir: Path
     visual_dir: Path
     visual_frames_dir: Path
+    debug_dir: Path
     refined_dir: Path
     sections_dir: Path
     audio_wav: Path
@@ -271,6 +272,7 @@ def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> P
 
 - `source_path` 是本次运行解析后的绝对本地视频或音频输入路径。schema、frontmatter、URL 模板和日志中需要表达输入文件时统一使用这个名字。
 - `run_dir == cache_dir / input_hash`,只存中间产物和 debug copy。
+- `debug_dir == cache/{input_hash}/debug`,存放失败诊断历史文件,不参与 stage cache manifest。
 - `cache_note_md == cache/{input_hash}/note.md`,是 assemble 生成的调试副本或缓存副本,不是最终用户产物。
 - `output_note_md == output_dir / "<source-stem>.md"`,是 latest 最终用户产物；assemble 同时写出 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
 - visual 帧文件存放在 `visual_frames_dir == cache/{input_hash}/visual/frames/`。
@@ -763,6 +765,7 @@ refined = read_json(ctx.paths.refined_transcript_json)
 | `cache_note_md` | `cache/{input_hash}/note.md`,调试或缓存副本 |
 | `output_note_md` | `output_dir/<source-stem>.md`,latest 最终用户产物 |
 | `visual_frames_dir` | `cache/{input_hash}/visual/frames/` |
+| `debug_dir` | `cache/{input_hash}/debug`,失败诊断历史目录 |
 
 目录布局:
 
@@ -771,6 +774,8 @@ cache/{input_hash}/
 ├── audio/
 │   ├── audio.wav
 │   └── extract.json
+├── debug/
+│   └── outline-failure-YYYYMMDD-HHMMSS-ffffffZ.json
 ├── visual/
 │   ├── frames/
 │   ├── sample.json
@@ -799,6 +804,7 @@ output_dir/
 - `output_dir/<source-stem>.md` 是 latest 最终用户产物。
 - `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 是每次 assemble 写出的归档用户产物。
 - `cache/{input_hash}/note.md` 只作为中间产物或 debug copy 存在。
+- `cache/{input_hash}/debug/` 存放失败诊断历史文件,不参与 cache hit 判定。
 - `source_path` 统一表示解析后的绝对本地输入路径,不区分视频和音频。配置、schema 和上下文中不要使用带媒体类型假设的字段名。
 - `image_source_path` 在 visual 与 merge schema 中保存为相对 `cache/{input_hash}/visual/frames/` 的路径。
 - `resolve_visual_image_path()` 负责把相对 `image_source_path` 解析到真实帧文件。

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ from lvnotes.core.timestamps import format_hms, format_mmss, parse_ts_marker, re
 from lvnotes.core.transcript import slice_transcript_text
 from lvnotes.merge import assemble
 from lvnotes.merge.assemble import _normalize_markdown_spacing, _render_refs, _strip_section_heading
+from lvnotes.merge import outline as outline_stage
 from lvnotes.merge.outline import _validate_outline
+from lvnotes.llm.types import LLMTextResult, LLMUsage
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,7 @@ def test_build_paths_uses_source_named_output_note() -> None:
     paths = build_paths(Path("/tmp/20260420-金涌院士报告前10分钟音频.mp3"), Path("cache"), Path("output"), "abc")
 
     assert paths.output_note_md == Path("output/20260420-金涌院士报告前10分钟音频.md")
+    assert paths.debug_dir == Path("cache/abc/debug")
     assert make_timestamped_output_path(paths.output_note_md, "20260509-085423") == Path("output/20260420-金涌院士报告前10分钟音频-20260509-085423.md")
 
 
@@ -213,6 +217,77 @@ def test_validate_outline_rejects_missing_or_overlapping_blocks() -> None:
 
     with pytest.raises(Exception, match="contiguous"):
         _validate_outline(_outline([(1, 0, 2), (2, 2, 4)]), block_count=5)
+
+
+def test_outline_retries_invariant_failure_and_writes_debug(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _outline_ctx(tmp_path)
+    invalid = _outline([(1, 0, 0)])
+    valid = _outline([(1, 0, 1)])
+    calls = []
+
+    def complete_json_with_raw(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(args)
+        outline = invalid if len(calls) == 1 else valid
+        return outline, LLMTextResult(text=f"raw-{len(calls)}", model="test", usage=LLMUsage(None, None, None))
+
+    monkeypatch.setattr(outline_stage, "for_task", lambda *args, **kwargs: object())
+    monkeypatch.setattr(outline_stage, "complete_json_with_raw", complete_json_with_raw)
+
+    output = outline_stage.run(ctx)
+
+    debug_files = sorted(ctx.paths.debug_dir.glob("outline-failure-*.json"))
+    debug_payload = json.loads(debug_files[0].read_text(encoding="utf-8"))
+    assert len(calls) == 2
+    assert len(debug_files) == 1
+    assert output.output_paths == [ctx.paths.outline_json]
+    assert debug_payload["stage"] == "merge.outline"
+    assert debug_payload["attempt"] == 1
+    assert debug_payload["raw_response"] == "raw-1"
+    assert debug_payload["parsed_outline"]["chapters"][0]["block_id_end"] == 0
+    assert json.loads(ctx.paths.outline_json.read_text(encoding="utf-8"))["chapters"][0]["block_id_end"] == 1
+
+
+def test_outline_keeps_timestamped_debug_history_when_retries_fail(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _outline_ctx(tmp_path)
+    calls = []
+
+    def complete_json_with_raw(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(args)
+        return _outline([(1, 0, 0)]), LLMTextResult(text=f"raw-{len(calls)}", model="test", usage=LLMUsage(None, None, None))
+
+    monkeypatch.setattr(outline_stage, "for_task", lambda *args, **kwargs: object())
+    monkeypatch.setattr(outline_stage, "complete_json_with_raw", complete_json_with_raw)
+
+    with pytest.raises(Exception, match="coverage"):
+        outline_stage.run(ctx)
+
+    debug_files = sorted(ctx.paths.debug_dir.glob("outline-failure-*.json"))
+    payloads = [json.loads(path.read_text(encoding="utf-8")) for path in debug_files]
+    assert len(calls) == 2
+    assert len(debug_files) == 2
+    assert len({path.name for path in debug_files}) == 2
+    assert [payload["attempt"] for payload in payloads] == [1, 2]
+    assert [payload["raw_response"] for payload in payloads] == ["raw-1", "raw-2"]
+
+
+def _outline_ctx(tmp_path: Path) -> PipelineContext:
+    source = tmp_path / "讲座.mp3"
+    source.write_bytes(b"audio")
+    paths = build_paths(source, tmp_path / "cache", tmp_path / "output", "inputhash")
+    for directory in (paths.run_dir, paths.debug_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(
+        paths.content_blocks_json,
+        [ContentBlock(0, 0.0, 1.0, "topic", "text", "summary", [], []), ContentBlock(1, 1.0, 2.0, "topic", "text", "summary", [], [])],
+    )
+    return PipelineContext(
+        source,
+        "inputhash",
+        "audio_only",
+        _assemble_config(),
+        paths,
+        ArtifactBundle(audio=type("Audio", (), {})()),
+    )
 
 
 def test_slice_transcript_text_uses_words_for_partial_segment() -> None:

@@ -16,6 +16,7 @@ class PipelinePaths:
     audio_dir: Path
     visual_dir: Path
     visual_frames_dir: Path
+    debug_dir: Path
     refined_dir: Path
     sections_dir: Path
     audio_wav: Path
@@ -47,6 +48,7 @@ def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash
         audio_dir=audio_dir,
         visual_dir=visual_dir,
         visual_frames_dir=visual_dir / "frames",
+        debug_dir=run_dir / "debug",
         refined_dir=run_dir / "refined",
         sections_dir=run_dir / "sections",
         audio_wav=audio_dir / "audio.wav",

@@ -48,7 +48,7 @@
 | `openai_compatible_chat.py` | OpenAI Chat 兼容 endpoint 实现 |
 | `factory.py` | 从配置创建 client，提供 `get_client()` / `for_task()` |
 | `text_helper.py` | `complete_text()` 统一文本补全入口 |
-| `json_helper.py` | `complete_json()` JSON 解析 + repair retry + schema 校验 |
+| `json_helper.py` | `complete_json()` / `complete_json_with_raw()` JSON 解析 + repair retry + schema 校验 |
 | `budget.py` | token / 成本估算与上下文预算检查 |
 
 provider 按 API 协议和兼容性边界切分，不按商业厂商切分。OpenRouter、本地 vLLM、DeepSeek、Qwen 和反代 endpoint 都走 `openai_compatible_chat`，不要为这些 endpoint 创建单独模块。
@@ -77,6 +77,14 @@ def complete_json(
     options: LLMRequestOptions | None = None,
     max_repair_retries: int = 1,
 ) -> JsonSchemaT: ...
+
+def complete_json_with_raw(
+    client: LLMClient,
+    messages: list[LLMMessage],
+    schema: type[JsonSchemaT],
+    options: LLMRequestOptions | None = None,
+    max_repair_retries: int = 1,
+) -> tuple[JsonSchemaT, LLMTextResult]: ...
 ```
 
 `schema` 支持两类输入:
@@ -111,7 +119,7 @@ section_markdown = result.text
 - stage 不读取 `profile.provider`、`base_url`、`api_key_env`、`model`。
 - stage 不 import `openai`、`anthropic` 或任何第三方 LLM SDK。
 - stage 不 catch SDK 原生异常，不按 HTTP status code 或错误字符串分支。
-- stage 不自己写 JSON repair 逻辑；结构化输出统一走 `complete_json()`。
+- stage 不自己写 JSON parse/schema repair 逻辑；结构化输出统一走 `complete_json()` 或 `complete_json_with_raw()`。
 
 ---
 
@@ -419,6 +427,14 @@ def complete_json(
     options: LLMRequestOptions | None = None,
     max_repair_retries: int = 1,
 ) -> JsonSchemaT: ...
+
+def complete_json_with_raw(
+    client: LLMClient,
+    messages: list[LLMMessage],
+    schema: type[JsonSchemaT],
+    options: LLMRequestOptions | None = None,
+    max_repair_retries: int = 1,
+) -> tuple[JsonSchemaT, LLMTextResult]: ...
 ```
 
 流程：
@@ -430,7 +446,7 @@ def complete_json(
 5. 如果解析或 schema 校验失败，构造 repair prompt。
 6. 最多重试 `max_repair_retries` 次，默认 1。
 7. repair 仍失败则抛 `LLMError`。
-8. 返回校验后的 schema 实例。
+8. `complete_json()` 返回校验后的 schema 实例;`complete_json_with_raw()` 返回 schema 实例和成功解析的 `LLMTextResult`。
 
 JSON 解析顺序：
 
@@ -457,7 +473,7 @@ repair_messages = [
 ]
 ```
 
-业务不变量由 stage 自己校验。`complete_json()` 不知道 `SegmentList` 必须覆盖完整音频，也不知道章节范围必须覆盖所有 block。
+业务不变量由 stage 自己校验。`complete_json()` / `complete_json_with_raw()` 不知道 `SegmentList` 必须覆盖完整音频，也不知道章节范围必须覆盖所有 block。
 
 ---
 
@@ -530,6 +546,7 @@ stage 可依赖：
 - `for_task(config, task_name) -> LLMClient`
 - `complete_text(client, messages, options) -> LLMTextResult`
 - `complete_json(client, messages, schema, options, max_repair_retries=1) -> JsonSchemaT`
+- `complete_json_with_raw(client, messages, schema, options, max_repair_retries=1) -> tuple[JsonSchemaT, LLMTextResult]`
 - `LLMTextResult.text`
 - `LLMTextResult.usage`
 - 统一异常类型

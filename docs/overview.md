@@ -294,7 +294,7 @@ longvideo-notes/
 - 配置中通过 profile 区分 endpoint,profile 包含:provider、base_url、api_key 环境变量名、model、capabilities flags(vision / prompt_cache / json_mode / reasoning)、max_context、reasoning defaults。
 - 任务 → profile 映射在配置中:`tasks.segment: gpt5_main`、`tasks.slide_judge: weak_vlm` 等。代码用 `for_task(config, "segment")` 获取,配置改 profile 不改代码。
 
-**JSON 输出 helper**:`llm/json_helper.py` 提供 `complete_json(client, messages, schema, options, max_repair_retries=1)`,统一处理"LLM 输出 JSON 解析 + 1 次修复重试 + schema 校验"。所有需要 LLM 输出结构化数据的 stage(segment / outline / 等)走此 helper,不在 stage 内自己写解析重试逻辑。
+**JSON 输出 helper**:`llm/json_helper.py` 提供 `complete_json(client, messages, schema, options, max_repair_retries=1)`,统一处理"LLM 输出 JSON 解析 + 1 次修复重试 + schema 校验"。需要记录原始 LLM 输出的 stage 使用 `complete_json_with_raw(...)`。业务不变量由 stage 校验;outline 对章节覆盖不变量失败会记录诊断文件并做 1 次修复重试。
 
 典型调用:
 
@@ -308,6 +308,7 @@ segments = complete_json(client, messages, SegmentList, options)
 - `LLMClient.complete(messages, options=None) -> LLMTextResult`
 - `complete_text(client, messages, options) -> LLMTextResult`
 - `complete_json(client, messages, schema, options, max_repair_retries=1) -> JsonSchemaT`
+- `complete_json_with_raw(client, messages, schema, options, max_repair_retries=1) -> tuple[JsonSchemaT, LLMTextResult]`
 - 错误归一化:所有实现统一抛 `AuthError` / `RateLimitError` / `ContextLengthError` / `TransportError`,调用方只 catch 这些。
 
 ### 5.4 `asr/` —— ASR 抽象

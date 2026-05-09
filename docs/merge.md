@@ -127,14 +127,14 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 - **单次 LLM 调用，不分块**。即使章节数 100+，summary 总量也远小于全文转录
 - **短输出原则**：LLM 输出 `Outline` JSON object,形如 `{"chapters": [...]}`；每个 chapter 含 `id / title / summary / block_id_start / block_id_end`；不复述章节正文
 - 用包内模板 `lvnotes/merge/prompts/outline.jinja` 渲染。模板内容：任务说明 + 目标章节数 hint + 所有 ContentBlock 的 `(id, topic, summary)` 列表（按 id 序）
-- 通过 `client = for_task(ctx.config, "outline")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper（同 segment / refine）
+- 通过 `client = for_task(ctx.config, "outline")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json_with_raw(client, messages, schema, options, max_repair_retries=1)` helper,以便失败诊断文件记录原始 LLM 输出
 - 输出 JSON 的解析与校验：
   1. 解析失败 → 重试 1 次；仍失败抛 `LLMError`
   2. 校验章节 id 从 1 开始严格递增：`chapters[i].id == i + 1`
   3. 校验范围递增不重叠：`chapters[i].block_id_end + 1 == chapters[i+1].block_id_start`
   4. 校验覆盖完整：`chapters[0].block_id_start == 0`、`chapters[-1].block_id_end == len(blocks) - 1`
   5. 校验单章范围合法：`block_id_start <= block_id_end` 且都在 `[0, len(blocks)-1]`
-  6. 任一校验失败抛 `LLMError`，触发上层重试
+  6. 任一不变量校验失败时写入失败诊断文件,并自动发起 1 次 outline 修复重试；修复后仍失败则抛 `LLMError`
 
 **配置项**（`merge.outline.*`）：
 - `target_chapter_count_hint: str` —— 例如 `"5-12"`，作为 prompt 中的目标章节数提示，非硬约束
@@ -143,7 +143,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **错误处理**：
 - LLM JSON 解析失败：1 次重试后上抛 `LLMError`
-- LLM 输出违反不变量：上抛 `LLMError` 含具体不变量名，不自动"修复"
+- LLM 输出违反不变量：每次失败尝试写入 `cache/{input_hash}/debug/outline-failure-YYYYMMDD-HHMMSS-ffffffZ.json`;自动修复 1 次后仍失败则上抛 `LLMError` 含具体不变量名
 - LLM endpoint 5xx / 限流：`tenacity` 自动重试，转 `TransportError` / `RateLimitError`
 
 ### 3.3 Stage 3: section
@@ -389,6 +389,7 @@ class Outline:
 - `cache/{input_hash}/outline.json` —— `Outline` 序列化，便于工具按章节切分笔记或重新生成单章
 - `cache/{input_hash}/sections/{chapter_id:03d}.md` —— 各章独立 markdown，便于用户单独编辑后重新 assemble
 - `cache/{input_hash}/content_blocks.json` —— `list[ContentBlock]` 序列化，调试用
+- `cache/{input_hash}/debug/outline-failure-YYYYMMDD-HHMMSS-ffffffZ.json` —— outline 不变量失败诊断历史,不参与 cache manifest
 
 ### CLI 访问入口
 

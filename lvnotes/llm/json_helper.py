@@ -9,7 +9,7 @@ from lvnotes.core.exceptions import LLMError
 from lvnotes.core.serialization import from_jsonable
 from lvnotes.llm.base import LLMClient
 from lvnotes.llm.text_helper import complete_text
-from lvnotes.llm.types import LLMMessage, LLMRequestOptions, TextPart
+from lvnotes.llm.types import LLMMessage, LLMRequestOptions, LLMTextResult, TextPart
 
 JsonSchemaT = TypeVar("JsonSchemaT")
 
@@ -21,6 +21,17 @@ def complete_json(
     options: LLMRequestOptions | None = None,
     max_repair_retries: int = 1,
 ) -> JsonSchemaT:
+    value, _ = complete_json_with_raw(client, messages, schema, options, max_repair_retries)
+    return value
+
+
+def complete_json_with_raw(
+    client: LLMClient,
+    messages: list[LLMMessage],
+    schema: type[JsonSchemaT],
+    options: LLMRequestOptions | None = None,
+    max_repair_retries: int = 1,
+) -> tuple[JsonSchemaT, LLMTextResult]:
     _validate_schema(schema)
     attempts = max_repair_retries + 1
     current_messages = messages
@@ -29,7 +40,7 @@ def complete_json(
         request_options = _json_options(client, options)
         result = complete_text(client, current_messages, request_options)
         try:
-            return _parse_and_validate(result.text, schema)
+            return _parse_and_validate(result.text, schema), result
         except (json.JSONDecodeError, ValueError, LLMError) as exc:
             current_error = str(exc)
             if attempt_index + 1 >= attempts:
