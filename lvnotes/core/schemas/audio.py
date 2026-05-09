@@ -64,6 +64,11 @@ class RefinedSegment:
 
 
 @dataclass(frozen=True)
+class RefinedSegmentList:
+    segments: list[RefinedSegment]
+
+
+@dataclass(frozen=True)
 class RefinedTranscript:
     segments: list[RefinedSegment]
     language: str

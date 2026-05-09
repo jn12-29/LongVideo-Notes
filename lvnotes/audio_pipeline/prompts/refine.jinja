@@ -1,14 +1,12 @@
 Return only JSON for one RefinedSegment with fields id, start, end, topic, cleaned_text, summary, cross_refs.
 Keep [[REF:N]] markers exactly when referencing earlier segments and list every N in cross_refs.
+Write cleaned_text as fluent written Chinese with proper Chinese punctuation. Restore sentence boundaries and use Chinese commas, periods, colons, parentheses, and list markers where appropriate. Do not output raw ASR-style text without punctuation. Do not invent content.
 
 Full transcript:
-{{ transcript }}
+{{ transcript_lines }}
 
 All segments:
 {{ segments }}
-
-Completed segments:
-{{ completed }}
 
 Current segment:
 {{ current }}

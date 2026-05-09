@@ -670,15 +670,8 @@ def transcribe(audio_path: Path) -> Transcript:
 实现某个细节时如果文档/规范里有依据,引用它:
 
 ```python
-# 按 docs/audio-pipeline.md §3.4,refine 阶段的 prompt cache 优化要求
-# system message 内的内容必须严格按这个顺序排列
-system_parts = [
-    TASK_RULES,
-    SEED_EXAMPLES,
-    raw_transcript_text,
-    segments_list_text,
-    completed_segments_text,
-]
+# 按 docs/audio-pipeline.md §3.4,refine 阶段所有模式共享同一校验合同
+_validate_refined_transcript(result, transcript, segments.markers)
 ```
 
 ## 19. 迭代节奏

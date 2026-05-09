@@ -1,0 +1,17 @@
+Return only JSON for one RefinedTranscript with fields segments, language, duration.
+Each item in segments must be a RefinedSegment with fields id, start, end, topic, cleaned_text, summary, cross_refs.
+Return exactly one RefinedSegment for every segment input, in the same id order.
+Keep [[REF:N]] markers exactly when referencing earlier segments and list every N in cross_refs. Only reference earlier segment ids.
+Write every cleaned_text as fluent written Chinese with proper Chinese punctuation. Restore sentence boundaries and use Chinese commas, periods, colons, parentheses, and list markers where appropriate. Do not output raw ASR-style text without punctuation. Do not invent content.
+
+Language: {{ language }}
+Duration: {{ duration }}
+
+Full transcript:
+{{ transcript_lines }}
+
+All segments:
+{{ segments }}
+
+Segment inputs:
+{{ segment_inputs }}

@@ -12,6 +12,7 @@ llm:
       capabilities: [vision, prompt_cache, json_mode, reasoning]
       max_context: 1000000
       timeout_seconds: 120
+      reasoning_effort: medium
     weak_vlm:
       provider: openai_compatible_chat
       base_url: https://openrouter.ai/api/v1
@@ -44,8 +45,8 @@ audio_pipeline:
     channels: 1
   segment: {}
   refine:
-    sliding_window_token_threshold: 30000
-    sliding_window_recent_segments: 5
+    mode: adaptive
+    batch_size: 8
 
 visual_pipeline:
   sample:

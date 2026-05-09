@@ -44,3 +44,5 @@ class LLMRequestOptions:
     max_output_tokens: int | None = None
     json_mode: bool = False
     timeout_seconds: float | None = None
+    reasoning_effort: str | None = None
+    thinking_budget_tokens: int | None = None

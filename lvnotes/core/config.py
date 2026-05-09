@@ -28,6 +28,8 @@ class LLMProfile(FrozenModel):
     capabilities: frozenset[str] = Field(default_factory=frozenset)
     max_context: int | None = None
     timeout_seconds: float | None = None
+    reasoning_effort: str | None = None
+    thinking_budget_tokens: int | None = None
 
     @field_validator("provider")
     @classmethod
@@ -44,6 +46,30 @@ class LLMProfile(FrozenModel):
         if unknown:
             raise ValueError(f"unsupported LLM capabilities: {sorted(unknown)}")
         return capabilities
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"minimal", "low", "medium", "high"}:
+            raise ValueError("reasoning_effort must be one of: minimal, low, medium, high")
+        return value
+
+    @field_validator("thinking_budget_tokens")
+    @classmethod
+    def validate_thinking_budget_tokens(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("thinking_budget_tokens must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def validate_reasoning_capability(self) -> "LLMProfile":
+        if (self.reasoning_effort is not None or self.thinking_budget_tokens is not None) and "reasoning" not in self.capabilities:
+            raise ValueError("reasoning options require reasoning capability")
+        if self.provider == "anthropic_messages" and self.reasoning_effort is not None:
+            raise ValueError("anthropic_messages uses thinking_budget_tokens, not reasoning_effort")
+        if self.provider in {"openai_chat", "openai_responses", "openai_compatible_chat"} and self.thinking_budget_tokens is not None:
+            raise ValueError(f"{self.provider} uses reasoning_effort, not thinking_budget_tokens")
+        return self
 
 
 class LLMConfig(FrozenModel):
@@ -91,8 +117,22 @@ class AudioSegmentConfig(FrozenModel):
 
 
 class AudioRefineConfig(FrozenModel):
-    sliding_window_token_threshold: int = 30000
-    sliding_window_recent_segments: int = 5
+    mode: str = "adaptive"
+    batch_size: int = 8
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str) -> str:
+        if value not in {"adaptive", "single_call", "batched", "serial"}:
+            raise ValueError("refine mode must be one of: adaptive, single_call, batched, serial")
+        return value
+
+    @field_validator("batch_size")
+    @classmethod
+    def validate_batch_size(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("batch_size must be positive")
+        return value
 
 
 class AudioPipelineConfig(FrozenModel):

@@ -31,13 +31,13 @@
 
 ### 2.1 Stage 3 segment 用"短输出"原则
 
-LLM 一次看全文转录,**只输出切分点**(每个段的 start/end + topic_hint),**不输出整段文本**。理由:长输出在大多数 LLM 上都会出现质量衰减(注意力发散、后半部分敷衍)。本管线把"切分"和"整理"拆开,前者短输出、后者按段串行整理,各自走自己的强项。
+LLM 一次看全文转录,**只输出切分点**(每个段的 start/end + topic_hint),**不输出整段文本**。本管线把"切分"和"整理"拆开:前者短输出,后者默认用 adaptive refine 优先一次生成完整 `RefinedTranscript`,失败时再分批或逐段兜底。
 
-### 2.2 Stage 4 refine 用"串行续写式"整理 + prompt cache
+### 2.2 Stage 4 refine 用 adaptive 策略
 
-按段串行调 LLM。第 K 段调用时,prompt 包含全文原始转录 + 切分点 + 已经整理完的前 K-1 段产物。让 LLM 看着前面段的样子续写第 K 段,保证术语、风格、详略一致。
+默认先尝试一次 LLM 调用生成完整 `RefinedTranscript`。如果完整输出解析、schema 或业务校验失败,按 `batch_size` 分批生成;若某个 batch 失败,仅该 batch 退回逐段 serial。这样短/中等输入优先少调用,长输出或局部困难段仍有可靠兜底。
 
-system message 内的内容**严格按固定顺序排列**(任务规则 → seed 例 → 全文 raw transcript → segments 列表 → 已完成段累积),让 OpenAI / Anthropic 这类支持 prompt cache 的 endpoint 能命中前缀。详见 §3.4。
+所有 refine prompt 都要求 `cleaned_text` 是带完整中文标点的书面表达,不得输出无标点的 ASR 逐字稿。
 
 ### 2.3 中间产物全部保留,面向通用下游
 
@@ -66,12 +66,6 @@ refine 阶段在整理第 K 段时,识别当前段引用的前文概念(前 K-1 
 每个 stage 的缓存键由 `core/cache.py` 按以下三元组合成:**输入产物的内容 hash + 该 stage 相关配置的 hash + stage 名**。配置 hash 含 LLM profile、prompt 模板、stage 自身的阈值参数。改任意一项会让该 stage 缓存失效,无需手动 invalidate。具体每个 stage 的缓存键组成见 §3 各小节。
 
 Prompt 模板的 hash 走 `core/cache.py` 的 `hash_prompt_template(path)` 唯一入口,内部做最小归一化:去除 `{# ... #}` Jinja 注释、collapse 连续空白为单空格、strip 首尾空白。模板内的注释调整、缩进美化不会触发整 stage 重跑。
-
-### 2.7 sliding window 单调进入
-
-refine 一旦进入 sliding window 模式,后续段全部维持该模式,不退出。即使中段 token 数因主题变化跌回阈值以下也不切回。理由:切回会导致 prompt 前缀再次变化、prompt cache 二次失效;单调进入只失效一次。
-
----
 
 ## 3. Stages
 
@@ -158,11 +152,11 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 **实现要点**:
 - **单次 LLM 调用,不分块**。对 1-3 小时的转录,主流大模型的 context window 足够装下全文(中文转录约 1 token/字,1 小时 ≈ 20-30k token)
 - **短输出原则**(见 §2.1):LLM 输出 `SegmentList` JSON object,形如 `{"markers": [...]}`;每个 marker 含 `id / start / end / topic_hint / boundary_reason`,不复述段内文本
-- 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:语义切分任务说明 + 全文转录。带 word-level 时间戳的 ASR 段会按每个词的时间戳展开进入 prompt,因此语义切分边界可以落在 ASR segment 内部的任意词级时间点。
+- 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:语义切分任务说明 + 全文转录。带 word-level 时间戳的 ASR 段会按每个词的时间戳展开进入 prompt,因此语义切分边界可以落在 ASR segment 内部的任意词级时间点。LLM 必须把每段 `start` 设为本段第一个词的 `start`,把 `end` 设为本段最后一个词的 `end`;没有 word-level 时间戳时才退回使用承载该语义段的 ASR segment `start/end`。
 - 通过 `client = for_task(ctx.config, "segment")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验全部走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper,不在本 stage 自己写解析重试逻辑
 - 业务级不变量校验在 helper 之上额外做:
-  1. 校验时间戳:`start < end`、`markers[i].end == markers[i+1].start`(首尾相邻)、`markers[0].start == 0`、`markers[-1].end == transcript.duration`(容差 ±200ms)
-  2. 任一校验失败抛 `LLMError` 含具体不变量名,触发上层重试
+  1. 将 LLM 输出的每个 `start` / `end` 独立吸附到最近的 transcript 时间戳候选。候选优先来自 `WordTimestamp.start/end`;没有 words 的 ASR segment 使用 `TranscriptSegment.start/end`。若原始边界距离最近候选 `> 0.2s` 记录 warning,`> 2.0s` 抛 `LLMError`。
+  2. 校验吸附后的时间戳:`start < end`、相邻 markers 不重叠、所有边界都在 `[0.0, transcript.duration]` 范围内。段间允许存在静音 gap,因为 `end` 表示上一段最后一个词的结束时间,`start` 表示下一段第一个词的开始时间。任一校验失败抛 `LLMError` 含具体不变量名,触发上层重试。
 
 **配置项**(`audio_pipeline.segment.*`):
 无。segment stage 只按转录内容和 prompt 做语义切分,不配置目标段数或段时长限制。
@@ -176,7 +170,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 
 ### 3.4 Stage 4: refine
 
-**职责**:按段串行整理转录文本,产出清洗后的内容、摘要、跨段术语呼应。轻量描述层:原则 + 配置项语义。Prompt 模板的具体形态见 `lvnotes/audio_pipeline/prompts/refine.jinja`。
+**职责**:整理转录文本,产出带中文标点的清洗内容、摘要、跨段术语呼应。Prompt 模板见 `lvnotes/audio_pipeline/prompts/refine_single.jinja`、`refine_batch.jinja`、`refine.jinja`。
 
 **Input**:`ctx.artifacts.audio.get_transcript()` + `ctx.artifacts.audio.get_segments()`。
 
@@ -184,31 +178,18 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 
 **实现要点**:
 
-*为什么串行*:每段 K 调 LLM 时,prompt 中包含前 K-1 段已整理产物。让 LLM "续写",保证术语、风格、详略一致。并行整理无法做到这一点。
+*执行模式*:
 
-*LLM 调用*:通过 `client = for_task(ctx.config, "refine")` 获取 LLM client。单段 JSON 输出解析、修复重试与 schema 校验统一走 `complete_json(client, messages, schema, options, max_repair_retries=1)`。
+- `single_call`:一次 LLM 调用返回完整 `RefinedTranscript`
+- `batched`:按 `batch_size` 分批,每次返回 `RefinedSegmentList`
+- `serial`:逐段返回 `RefinedSegment`,作为最小兜底路径
+- `adaptive`:默认模式。先 `single_call`,失败后 `batched`;若某个 batch 失败,只对该 batch 退回 `serial`
+
+*LLM 调用*:通过 `client = for_task(ctx.config, "refine")` 获取 LLM client。JSON 输出解析、修复重试与 schema 校验统一走 `complete_json(client, messages, schema, options, max_repair_retries=1)`。
 
 *当前段文本*:通过 `core.transcript.slice_transcript_text(transcript, start, end)` 按 `SegmentMarker` 时间范围切出 raw transcript。该 helper 优先使用 `TranscriptSegment.words` 的 word-level 时间戳,因此一个 ASR segment 可以被拆分到多个语义段;没有 words 时才退回整段文本。
 
-*Prompt cache 命中规则*:system message 内容**严格按以下顺序排列**:
-
-1. 任务规则文本(固定不变)
-2. Seed 例(1-2 个标准答案样例,固定不变)
-3. 全文 raw transcript(一次写入,整个 stage 不变)
-4. SegmentList(一次写入,整个 stage 不变)
-5. 已完成段累积文本(每整理一段在末尾追加)
-
-前 4 项在整个 refine stage 内不变。第 5 项是只增不改的累积。OpenAI / Anthropic 这类支持 prompt cache 的 endpoint 能命中前缀(前 K 段调用的所有内容是第 K+1 段调用 prompt 的前缀)。
-
-任何模块在 system message 中**插入新内容必须追加到末尾**,不能改前缀,否则全部段的 cache 全部失效。
-
-*Sliding window 单调性*(见 §2.7):当 system message token 数首次超过 `sliding_window_token_threshold` 时,从该段 K 起进入 sliding window 模式:
-
-- 第 5 项"已完成段累积文本"只保留最近 `sliding_window_recent_segments` 段的完整 `cleaned_text`
-- 较早段只保留 `topic + summary`
-- 仍然支持跨段术语呼应:LLM 看 summary 仍能识别概念是否在前文出现过
-
-进入 sliding window 模式会让 prompt cache 失效(前缀变了),所以**单调进入,不退出**:此后所有 K' > K 段一律以 sliding 模式构造 prompt。在 `StageOutput.metadata` 中记录首次进入的段 id,便于调试。
+*标点与书面化*:所有 refine prompt 必须要求 `cleaned_text` 补全中文标点,恢复句界,并使用中文逗号、句号、冒号、括号和列表标记,不得编造原文没有的信息。
 
 *跨段术语呼应*(见 §2.4):prompt 中明确指示 LLM "如果当前段引用了之前段的概念,把对应 segment id 列入 `cross_refs`,并在 `cleaned_text` 中使用 `[[REF:N]]` 形式标注内嵌引用 marker"。
 
@@ -220,17 +201,19 @@ LLM 输出的 `cross_refs` 必须满足:
 
 *debug*:这是开发期调试能力,不进入配置文件。CLI 实现 refine stage 时应预留 `--debug` 参数:第一段 refine 后暂停,把产物打印给用户审核 + 可手工编辑,再重新加载到累积文本继续后续段。默认关闭,仅显式传 CLI 参数时启用。
 
-*断点续跑*:每完成一段就 `atomic_write_json` 落盘 `refined/{seg_id:04d}.json`。stage 启动时扫描该目录,从未完成的最早一段继续。**这是 stage 内部的断点续跑,不是缓存机制**——stage 级缓存(见下"缓存键")一旦失效(如 prompt 模板改了),或本次 `ctx.no_cache is True`,所有 `refined/*.json` 一并清空重跑。
+*落盘*:无论 `single_call`、`batched` 还是 `serial`,成功产物都逐段落盘到 `refined/{seg_id:04d}.json`,最后汇总写 `refined_transcript.json`。stage 级缓存失效或 `ctx.no_cache is True` 时清空 `refined/*.json` 后重跑。
 
 **配置项**(`audio_pipeline.refine.*`):
-- `sliding_window_token_threshold: int` —— 默认 30000
-- `sliding_window_recent_segments: int` —— 默认 5
+- `mode: str` —— 默认 `adaptive`;允许 `adaptive`、`single_call`、`batched`、`serial`
+- `batch_size: int` —— 默认 `8`;`batched` / `adaptive` 中每批包含的语义段数
 
-**缓存键**:stage 级,调用 `build_cache_key("refine", {"transcript": hash_json(Transcript), "segments": hash_json(SegmentList), "config": hash_json(refine 配置), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/audio_pipeline/prompts/refine.jinja")})`。命中时直接返回 `RefinedTranscript`,不进入 stage。未命中且 `ctx.no_cache is False` 时进入 stage,扫描 `refined/*.json` 走断点续跑。`ctx.no_cache is True` 时跳过 manifest 命中并清空 `refined/*.json` 后重跑全部段。
+**缓存键**:stage 级,调用 `build_cache_key("refine", {"transcript": hash_json(Transcript), "segments": hash_json(SegmentList), "config": hash_json(refine 配置), "profile": hash_json(LLM profile), "prompt": hash_json(三个 refine prompt hash)})`。命中时直接返回 `RefinedTranscript`,不进入 stage。未命中时按配置模式运行。
 
 **错误处理**:
-- 单段 LLM JSON / schema 失败:`complete_json` 内 1 次修复重试覆盖;耗尽抛 `LLMError`,整个 refine 中止(已完成段保留落盘,下次重跑接续)
-- 单段 LLM 网络/限流失败:`llm/` 内部 `tenacity` 重试,耗尽抛 `LLMError`
+- `single_call` 校验失败:在 `adaptive` 下退回 `batched`;在 `single_call` 模式下抛 `LLMError`
+- batch 校验失败:在 `adaptive` 下该 batch 退回 `serial`;在 `batched` 模式下抛 `LLMError`
+- 单段 LLM JSON / schema 失败:`complete_json` 内 1 次修复重试覆盖;耗尽抛 `LLMError`,整个 refine 中止
+- LLM 网络/限流失败:`llm/` 内部 `tenacity` 重试,耗尽抛 `LLMError`
 - LLM 输出 `cross_refs` 含未来段 id 或不存在的 id,或 `[[REF:N]]` marker 与 `cross_refs` 不一致:抛 `LLMError`,触发该段重试(提示 LLM 不要编造段号)
 
 ---
@@ -319,7 +302,7 @@ class RefinedTranscript:
 5. `RefinedSegment.cross_refs` 中每个值都 `< self.id` 且对应到存在的 `RefinedSegment.id`;`cleaned_text` 内出现的所有 `[[REF:N]]` 标记 N 必须出现在 `cross_refs` 中(双向一致)
 6. `Transcript.duration == AudioExtractResult.duration == RefinedTranscript.duration`(容差 ±100ms)
 
-不变量违反 → `AssertionError` 直接抛(属于 `coding-standards.md` §3.1 表中的"不可预期的内部错误"),不要 catch、不要"自动修复"。
+LLM 输出导致的业务级不变量违反抛 `LLMError`,触发上层重试或中止。内部构造出的不可能状态才直接抛 `AssertionError`。
 
 ---
 

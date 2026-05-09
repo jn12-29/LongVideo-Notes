@@ -56,7 +56,7 @@ assemble 阶段做纯逻辑替换：
 
 每章独立 LLM 调用，并发数由 `merge.section.concurrent_calls` 控制。**缓存粒度是 per-chapter**（不是 stage 级）：改某章 prompt 或上游 ContentBlock，只该章失效。manifest 命中的章节跳过，`chapter_id` 从 1 开始，例如第一章为 `sections/001.md`。
 
-这与 `audio-pipeline.md` §3.4 refine 的 stage 级缓存不同：refine 段间有强依赖（前段产物作为后段 prompt 一部分），所以以 stage 为缓存单元；section 章节之间相对独立（仅共享 outline 全局摘要作为 context），适合 per-chapter 缓存。
+这与 `audio-pipeline.md` §3.4 refine 的 stage 级缓存不同：refine 可能通过 `single_call`、`batched` 或 fallback `serial` 产出同一个 `RefinedTranscript`，因此以 stage 为缓存单元；section 章节之间相对独立（仅共享 outline 全局摘要作为 context），适合 per-chapter 缓存。
 
 ### 2.6 assemble 是纯逻辑
 

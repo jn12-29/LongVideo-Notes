@@ -3,6 +3,7 @@ import os
 
 from lvnotes.core.config import LLMProfile
 from lvnotes.core.exceptions import AuthError, LLMError, RateLimitError, TransportError
+from lvnotes.llm.options import apply_profile_defaults, validate_reasoning_options
 from lvnotes.llm.types import ImagePart, LLMMessage, LLMRequestOptions, LLMTextResult, LLMUsage, TextPart
 
 
@@ -16,16 +17,20 @@ class OpenAIChatClient:
         return self._profile
 
     def complete(self, messages: list[LLMMessage], options: LLMRequestOptions | None = None) -> LLMTextResult:
-        request_options = options or LLMRequestOptions()
+        request_options = apply_profile_defaults(self._profile, options or LLMRequestOptions())
+        validate_reasoning_options(self._profile, request_options)
+        request_payload = {
+            "model": self._profile.model,
+            "messages": _chat_messages(messages),
+            "temperature": request_options.temperature,
+            "max_tokens": request_options.max_output_tokens,
+            "timeout": request_options.timeout_seconds or self._profile.timeout_seconds,
+            "response_format": {"type": "json_object"} if request_options.json_mode else None,
+        }
+        if request_options.reasoning_effort is not None:
+            request_payload["reasoning_effort"] = request_options.reasoning_effort
         try:
-            response = self._client.chat.completions.create(
-                model=self._profile.model,
-                messages=_chat_messages(messages),
-                temperature=request_options.temperature,
-                max_tokens=request_options.max_output_tokens,
-                timeout=request_options.timeout_seconds or self._profile.timeout_seconds,
-                response_format={"type": "json_object"} if request_options.json_mode else None,
-            )
+            response = self._client.chat.completions.create(**request_payload)
         except Exception as exc:
             raise _normalize_openai_error(exc) from exc
         choice = response.choices[0]

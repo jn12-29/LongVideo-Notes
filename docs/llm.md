@@ -241,6 +241,8 @@ class LLMRequestOptions:
     max_output_tokens: int | None = None
     json_mode: bool = False
     timeout_seconds: float | None = None
+    reasoning_effort: str | None = None
+    thinking_budget_tokens: int | None = None
 ```
 
 约束：
@@ -269,14 +271,16 @@ llm:
       capabilities: [vision, prompt_cache, json_mode, reasoning]
       max_context: 1000000
       timeout_seconds: 120
+      reasoning_effort: medium
     claude_main:
       provider: anthropic_messages
       base_url: https://api.anthropic.com
       api_key_env: ANTHROPIC_API_KEY
       model: claude-sonnet-4-5
-      capabilities: [vision, prompt_cache]
+      capabilities: [vision, prompt_cache, reasoning]
       max_context: 200000
       timeout_seconds: 120
+      thinking_budget_tokens: 4096
     weak_vlm:
       provider: openai_compatible_chat
       base_url: https://openrouter.ai/api/v1
@@ -305,8 +309,19 @@ tasks:
 | `capabilities` | profile 支持的能力列表 |
 | `max_context` | 最大上下文 token 数，可空 |
 | `timeout_seconds` | 单次请求超时，可空 |
+| `reasoning_effort` | OpenAI / Chat-compatible reasoning 强度，可空；允许 `minimal`、`low`、`medium`、`high` |
+| `thinking_budget_tokens` | Anthropic thinking token 预算，可空；必须为正整数 |
 
 `llm` 配置不提供默认 profile。每个会调用 LLM 的 stage 必须通过 `tasks.<task_name>` 显式映射到 profile；缺失映射应在配置加载或 `for_task()` 时抛 `ConfigError`。
+
+`reasoning_effort` / `thinking_budget_tokens` 是 profile 默认值，所有映射到该 profile 的任务都会继承。调用方也可通过 `LLMRequestOptions` 覆盖为其他值。使用任一 reasoning 选项时，profile 必须声明 `reasoning` capability。
+
+Provider 映射规则：
+
+- `openai_chat` / `openai_compatible_chat`：`reasoning_effort` 透传为 Chat Completions `reasoning_effort`
+- `openai_responses`：`reasoning_effort` 透传为 Responses API `reasoning.effort`
+- `anthropic_messages`：`thinking_budget_tokens` 透传为 Anthropic Messages `thinking={type: enabled, budget_tokens: ...}`。若请求未设置 `max_output_tokens`,adapter 会把 `max_tokens` 设为 `thinking_budget_tokens + 1024`;若显式 `max_output_tokens <= thinking_budget_tokens`,请求前抛 `LLMError`
+- 不支持对应参数的 endpoint 会由 provider 层归一化为 `LLMError` / `TransportError`，stage 不做特殊分支
 
 ### 5.1 `api_key_env` 规则
 
@@ -381,8 +396,12 @@ def complete_text(
 1. 调用 `check_context_budget(client.profile, messages, options.max_output_tokens)`。
 2. 校验 `ImagePart` 需要 `vision` capability。
 3. 校验 `options.json_mode=True` 需要 `json_mode` capability。
-4. 调用 `client.complete(messages, options)`。
-5. 返回 `LLMTextResult`。
+4. 合并 profile 中的 reasoning / thinking 默认值；`LLMRequestOptions` 中显式提供的值优先。
+5. 校验 reasoning 选项需要 `reasoning` capability,并校验 provider-specific 选项:
+   - `openai_chat` / `openai_compatible_chat` / `openai_responses` 使用 `reasoning_effort`
+   - `anthropic_messages` 使用 `thinking_budget_tokens`
+6. 调用 `client.complete(messages, options)`。
+7. 返回 `LLMTextResult`。
 
 `complete_text()` 不解析 JSON、不做业务校验、不修改 stage prompt。
 

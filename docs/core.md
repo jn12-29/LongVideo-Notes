@@ -507,8 +507,8 @@ class AudioSegmentConfig:
 
 @dataclass(frozen=True)
 class AudioRefineConfig:
-    sliding_window_token_threshold: int = 30000
-    sliding_window_recent_segments: int = 5
+    mode: str = "adaptive"
+    batch_size: int = 8
 
 @dataclass(frozen=True)
 class AudioPipelineConfig:

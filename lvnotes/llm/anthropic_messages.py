@@ -2,6 +2,7 @@ import base64
 
 from lvnotes.core.config import LLMProfile
 from lvnotes.core.exceptions import AuthError, LLMError, RateLimitError, TransportError
+from lvnotes.llm.options import apply_profile_defaults, validate_reasoning_options
 from lvnotes.llm.types import ImagePart, LLMMessage, LLMRequestOptions, LLMTextResult, LLMUsage, TextPart
 
 
@@ -15,17 +16,24 @@ class AnthropicMessagesClient:
         return self._profile
 
     def complete(self, messages: list[LLMMessage], options: LLMRequestOptions | None = None) -> LLMTextResult:
-        request_options = options or LLMRequestOptions()
+        request_options = apply_profile_defaults(self._profile, options or LLMRequestOptions())
+        validate_reasoning_options(self._profile, request_options)
         system_text, request_messages = _messages(messages)
+        max_tokens = request_options.max_output_tokens if request_options.max_output_tokens is not None else ((request_options.thinking_budget_tokens + 1024) if request_options.thinking_budget_tokens is not None else 1024)
+        if request_options.thinking_budget_tokens is not None and request_options.thinking_budget_tokens >= max_tokens:
+            raise LLMError("thinking_budget_tokens must be less than max_output_tokens for anthropic_messages")
+        request_payload = {
+            "model": self._profile.model,
+            "max_tokens": max_tokens,
+            "temperature": request_options.temperature,
+            "system": system_text or None,
+            "messages": request_messages,
+            "timeout": request_options.timeout_seconds or self._profile.timeout_seconds,
+        }
+        if request_options.thinking_budget_tokens is not None:
+            request_payload["thinking"] = {"type": "enabled", "budget_tokens": request_options.thinking_budget_tokens}
         try:
-            response = self._client.messages.create(
-                model=self._profile.model,
-                max_tokens=request_options.max_output_tokens or 1024,
-                temperature=request_options.temperature,
-                system=system_text or None,
-                messages=request_messages,
-                timeout=request_options.timeout_seconds or self._profile.timeout_seconds,
-            )
+            response = self._client.messages.create(**request_payload)
         except Exception as exc:
             raise _normalize_anthropic_error(exc) from exc
         return LLMTextResult(

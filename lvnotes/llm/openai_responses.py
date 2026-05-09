@@ -1,6 +1,7 @@
 from lvnotes.core.config import LLMProfile
 from lvnotes.core.exceptions import LLMError
 from lvnotes.llm.openai_chat import _create_openai_client, _image_data_url, _normalize_openai_error, _usage
+from lvnotes.llm.options import apply_profile_defaults, validate_reasoning_options
 from lvnotes.llm.types import ImagePart, LLMMessage, LLMRequestOptions, LLMTextResult, TextPart
 
 
@@ -14,16 +15,20 @@ class OpenAIResponsesClient:
         return self._profile
 
     def complete(self, messages: list[LLMMessage], options: LLMRequestOptions | None = None) -> LLMTextResult:
-        request_options = options or LLMRequestOptions()
+        request_options = apply_profile_defaults(self._profile, options or LLMRequestOptions())
+        validate_reasoning_options(self._profile, request_options)
+        request_payload = {
+            "model": self._profile.model,
+            "input": _responses_input(messages),
+            "temperature": request_options.temperature,
+            "max_output_tokens": request_options.max_output_tokens,
+            "timeout": request_options.timeout_seconds or self._profile.timeout_seconds,
+            "text": {"format": {"type": "json_object"}} if request_options.json_mode else None,
+        }
+        if request_options.reasoning_effort is not None:
+            request_payload["reasoning"] = {"effort": request_options.reasoning_effort}
         try:
-            response = self._client.responses.create(
-                model=self._profile.model,
-                input=_responses_input(messages),
-                temperature=request_options.temperature,
-                max_output_tokens=request_options.max_output_tokens,
-                timeout=request_options.timeout_seconds or self._profile.timeout_seconds,
-                text={"format": {"type": "json_object"}} if request_options.json_mode else None,
-            )
+            response = self._client.responses.create(**request_payload)
         except Exception as exc:
             raise _normalize_openai_error(exc) from exc
         text = getattr(response, "output_text", None)

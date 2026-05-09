@@ -86,7 +86,7 @@
 | 3     | segment    | LLM            | `segments.json` (语义切分点)                               |
 | 4     | refine     | LLM            | `refined_transcript.json` (按段清洗 + 摘要 + 跨段术语呼应) |
 
-Stage 3 是 LLM 一次性看全文输出切分点(短输出,避免长输出衰减)。Stage 4 是 **串行续写式整理**:每段调用 LLM 时,context 包含全文原始转录 + 已经完成的前 K-1 段整理结果,让 LLM 看着前面段的样子续写第 K 段,保证术语、风格、详略一致。利用 prompt cache 降本。整理时还会识别当前段引用的前文概念,记录为段间的 `cross_refs`,并以内部 marker `[[REF:N]]` 形式嵌入清洗文本;最终笔记由合并阶段据此渲染章节内交叉引用。
+Stage 3 是 LLM 一次性看全文输出切分点(短输出,避免长输出衰减)。Stage 4 默认使用 adaptive refine:先尝试一次生成完整 `RefinedTranscript`,失败后按 batch 生成,单个 batch 失败再退回逐段 serial。refine 会将 ASR 原文整理成带中文标点的书面表达,并识别跨段概念引用,以内部 marker `[[REF:N]]` 形式嵌入清洗文本;最终笔记由合并阶段据此渲染章节内交叉引用。
 
 ### 3.2 多模管线(5 个 stage,仅多模模式启用)
 
@@ -290,7 +290,7 @@ longvideo-notes/
   - `OpenAICompatibleChatClient` 覆盖 OpenAI、OpenRouter、本地 vLLM、DeepSeek、Qwen、各类反代等所有 OpenAI Chat 兼容 endpoint
   - `OpenAIResponsesClient` 给需要 Responses API 的模型
   - `AnthropicMessagesClient` 给 Anthropic Messages API
-- 配置中通过 profile 区分 endpoint,profile 包含:provider、base_url、api_key 环境变量名、model、capabilities flags(vision / prompt_cache / json_mode / max_context)。
+- 配置中通过 profile 区分 endpoint,profile 包含:provider、base_url、api_key 环境变量名、model、capabilities flags(vision / prompt_cache / json_mode / reasoning)、max_context、reasoning defaults。
 - 任务 → profile 映射在配置中:`tasks.segment: gpt5_main`、`tasks.slide_judge: weak_vlm` 等。代码用 `for_task(config, "segment")` 获取,配置改 profile 不改代码。
 
 **JSON 输出 helper**:`llm/json_helper.py` 提供 `complete_json(client, messages, schema, options, max_repair_retries=1)`,统一处理"LLM 输出 JSON 解析 + 1 次修复重试 + schema 校验"。所有需要 LLM 输出结构化数据的 stage(segment / outline / 等)走此 helper,不在 stage 内自己写解析重试逻辑。
@@ -431,8 +431,9 @@ llm:
       base_url: https://api.openai.com/v1
       api_key_env: OPENAI_API_KEY
       model: gpt-5
-      capabilities: [vision, prompt_cache, json_mode]
+      capabilities: [vision, prompt_cache, json_mode, reasoning]
       max_context: 1000000
+      reasoning_effort: medium
     weak_vlm:
       provider: openai_compatible_chat
       base_url: https://openrouter.ai/api/v1
@@ -464,8 +465,8 @@ audio_pipeline:
     channels: 1 # 重采样目标,1 (mono) 或 2 (stereo)
   segment: {}
   refine:
-    sliding_window_token_threshold: 30000
-    sliding_window_recent_segments: 5
+    mode: adaptive
+    batch_size: 8
 
 visual_pipeline:
   sample:

@@ -1,6 +1,7 @@
 from lvnotes.core.schemas.audio import (
     AudioExtractResult,
     RefinedSegment,
+    RefinedSegmentList,
     RefinedTranscript,
     SegmentList,
     SegmentMarker,
@@ -27,6 +28,7 @@ __all__ = [
     "ContentBlock",
     "Outline",
     "RefinedSegment",
+    "RefinedSegmentList",
     "RefinedTranscript",
     "SampledFrame",
     "SegmentList",
