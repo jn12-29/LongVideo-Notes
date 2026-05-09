@@ -13,7 +13,7 @@ llm:
       model: gpt-5
       capabilities: [vision, prompt_cache, json_mode, reasoning]
       max_context: 1000000
-      timeout_seconds: 120
+      timeout_seconds: 3000
       reasoning_effort: medium
 
     # Candidate: cheap/fast VLM for visual judging.
@@ -23,7 +23,7 @@ llm:
       api_key_env: OPENROUTER_API_KEY
       model: google/gemini-2.5-flash
       capabilities: [vision]
-      timeout_seconds: 60
+      timeout_seconds: 3000
 
     # Candidate: custom OpenAI-compatible text endpoint.
     # Local endpoints may use api_key_env: null. Remote endpoints should use an env var.
@@ -34,7 +34,7 @@ llm:
       model: your-text-model
       capabilities: [json_mode]
       max_context: 128000
-      timeout_seconds: 120
+      timeout_seconds: 3000
 
     # Candidate: custom weak VLM for visual judging.
     custom_weak_vlm: &custom_weak_vlm
@@ -43,7 +43,7 @@ llm:
       api_key_env: null
       model: your-fast-vlm-model
       capabilities: [vision, json_mode]
-      timeout_seconds: 60
+      timeout_seconds: 3000
 
     # Candidate: custom strong VLM for detailed visual descriptions.
     custom_strong_vlm: &custom_strong_vlm
@@ -53,7 +53,7 @@ llm:
       model: your-strong-vlm-model
       capabilities: [vision, json_mode]
       max_context: 128000
-      timeout_seconds: 120
+      timeout_seconds: 3000
 
     # Active stable interfaces used by tasks.
     # Switch providers by changing only these aliases.
