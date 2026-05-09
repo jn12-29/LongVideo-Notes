@@ -58,6 +58,35 @@ class RateLimitedOnceClient(StaticClient):
         return super().complete(messages, options)
 
 
+class SequenceClient(StaticClient):
+    def __init__(self, outputs: list[str]) -> None:
+        super().__init__(outputs[-1])
+        self.outputs = outputs
+        self.calls = 0
+
+    def complete(
+        self,
+        messages: list[LLMMessage],
+        options: LLMRequestOptions | None = None,
+    ) -> LLMTextResult:
+        self.calls += 1
+        return LLMTextResult(text=self.outputs.pop(0), model="test", usage=LLMUsage(None, None, None))
+
+
+class AlwaysRateLimitedClient(StaticClient):
+    def __init__(self) -> None:
+        super().__init__("")
+        self.calls = 0
+
+    def complete(
+        self,
+        messages: list[LLMMessage],
+        options: LLMRequestOptions | None = None,
+    ) -> LLMTextResult:
+        self.calls += 1
+        raise RateLimitError("limited")
+
+
 def test_complete_json_builds_dataclass() -> None:
     client: LLMClient = StaticClient('{"title":"hello","count":2}')
     result = complete_json(client, [LLMMessage(role="user", content=[TextPart("x")])], JsonResult)
@@ -118,3 +147,27 @@ def test_complete_text_retries_rate_limit_error(monkeypatch) -> None:  # type: i
     assert len(acquire_calls) == 2
     assert [name for name, _ in acquire_calls] == ["retry_limited", "retry_limited"]
     assert sleeps == [5.0]
+
+
+def test_complete_text_raises_after_rate_limit_retries_are_exhausted(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    sleeps: list[float] = []
+    monkeypatch.setattr("lvnotes.llm.text_helper.time.sleep", sleeps.append)
+    client = AlwaysRateLimitedClient()
+
+    with pytest.raises(RateLimitError):
+        complete_text(client, [LLMMessage(role="user", content=[TextPart("x")])])
+
+    assert client.calls == 4
+    assert sleeps == [5.0, 10.0, 20.0]
+
+
+def test_complete_json_repair_retry_goes_through_limiter(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    acquire_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr("lvnotes.llm.text_helper.acquire_profile_rate_limit", lambda profile, token_budget: acquire_calls.append((profile.name, token_budget)))
+    client = SequenceClient(["not json", '{"title":"fixed","count":3}'])
+
+    result = complete_json(client, [LLMMessage(role="user", content=[TextPart("x")])], JsonResult, max_repair_retries=1)
+
+    assert result == JsonResult(title="fixed", count=3)
+    assert client.calls == 2
+    assert len(acquire_calls) == 2
