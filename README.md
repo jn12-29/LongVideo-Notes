@@ -47,7 +47,7 @@ lvnotes assemble <input-path> --no-cache
 | `lvnotes unify <input-path>` | 把音频内容和可选视觉描述合并成统一内容块。 |
 | `lvnotes outline <input-path>` | 基于内容块生成章节大纲。 |
 | `lvnotes section <input-path>` | 按章节生成 Markdown 正文片段。 |
-| `lvnotes assemble <input-path>` | 将章节片段组装成 latest 笔记、带时间戳归档笔记和 cache debug copy。 |
+| `lvnotes assemble <input-path>` | 将章节片段组装成 latest 笔记、带时间戳归档笔记、每份笔记的图片资源目录和 cache debug copy。 |
 
 常用选项：
 
@@ -67,7 +67,7 @@ lvnotes assemble <input-path> --no-cache
 传 `--head-minutes <minutes>` 时，CLI 会先在每个媒体文件同目录生成或复用 `<stem>.head-<minutes>m<suffix>`，然后只处理该裁剪文件。
 写入型命令会对每个媒体文件对应的 cache 目录获取独占锁；`inspect` 保持只读，不加锁也不创建目录。
 运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。`visual describe` 和 `merge section` 会按配置并发调用 LLM/VLM。
-单文件输入的最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。目录输入会在 `output/` 下保留输入目录内的相对目录结构,避免同名文件互相覆盖。
+单文件输入的最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。每个 Markdown 文件旁会生成同名图片资源目录，例如 `output/<source-stem>_assets/000001.png` 和 `output/<source-stem>-YYYYMMDD-HHMMSS_assets/000001.png`；Markdown 图片链接只指向同目录下的 `_assets/`。目录输入会在 `output/` 下保留输入目录内的相对目录结构,避免同名文件互相覆盖。
 
 CLI 默认查找当前目录下的 `config.yaml`，也可通过 `--config <path>` 指定配置文件。可从 `config.example.yaml` 复制并按本地 LLM / ASR 环境调整。
 LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 profile 的任务都会继承。

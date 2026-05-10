@@ -10,7 +10,7 @@ from lvnotes.core.context import ArtifactBundle, PipelineContext
 from lvnotes.core.paths import build_paths, make_output_stem, make_timestamped_output_path
 from lvnotes.core.serialization import from_jsonable, to_jsonable
 from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
-from lvnotes.core.schemas.merge import Chapter, ContentBlock, Outline
+from lvnotes.core.schemas.merge import Chapter, ContentBlock, Outline, VisualSlot
 from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, format_mmss, parse_ts_marker, render_timestamp
 from lvnotes.core.transcript import slice_transcript_text
@@ -136,6 +136,49 @@ def test_assemble_writes_latest_and_timestamped_outputs(tmp_path: Path) -> None:
     assert manifest.output_paths == [ctx.paths.output_note_md, ctx.paths.cache_note_md]
 
 
+def test_assemble_writes_explicit_chapter_anchors(tmp_path: Path) -> None:
+    ctx = _assemble_ctx(tmp_path)
+
+    assemble.run(ctx)
+
+    note = ctx.paths.output_note_md.read_text(encoding="utf-8")
+    assert "- [开场](#chapter-1-开场)" in note
+    assert '<a id="chapter-1-开场"></a>\n## 开场' in note
+
+
+def test_assemble_writes_per_output_assets_and_rewrites_cache_links(tmp_path: Path) -> None:
+    ctx = _assemble_ctx_with_visual(tmp_path)
+
+    output = assemble.run(ctx)
+    archived = [path for path in output.output_paths if path.name.startswith("讲座-202")][0]
+
+    latest_note = ctx.paths.output_note_md.read_text(encoding="utf-8")
+    archived_note = archived.read_text(encoding="utf-8")
+    assert "../cache/" not in latest_note
+    assert "../cache/" not in archived_note
+    assert "讲座_assets/000001.png" in latest_note
+    assert f"{archived.stem}_assets/000001.png" in archived_note
+    assert "讲座_assets/000001.png" not in archived_note
+    assert (ctx.paths.output_note_md.parent / "讲座_assets" / "000001.png").read_bytes() == b"image"
+    assert (archived.parent / f"{archived.stem}_assets" / "000001.png").read_bytes() == b"image"
+
+
+def test_assemble_cache_hit_restores_per_output_assets(tmp_path: Path) -> None:
+    ctx = _assemble_ctx_with_visual(tmp_path)
+
+    first = assemble.run(ctx)
+    first_archived = [path for path in first.output_paths if path.name.startswith("讲座-202")][0]
+    (ctx.paths.output_note_md.parent / "讲座_assets" / "000001.png").unlink()
+    (first_archived.parent / f"{first_archived.stem}_assets" / "000001.png").unlink()
+
+    second = assemble.run(ctx)
+    second_archived = [path for path in second.output_paths if path.name.startswith("讲座-202")][0]
+
+    assert second.cache_hit is True
+    assert (ctx.paths.output_note_md.parent / "讲座_assets" / "000001.png").read_bytes() == b"image"
+    assert (second_archived.parent / f"{second_archived.stem}_assets" / "000001.png").read_bytes() == b"image"
+
+
 def test_assemble_cache_key_includes_mode(tmp_path: Path) -> None:
     ctx = _assemble_ctx(tmp_path)
     assemble.run(ctx)
@@ -157,6 +200,23 @@ def _assemble_ctx(tmp_path: Path) -> PipelineContext:
     atomic_write_json(paths.content_blocks_json, [ContentBlock(0, 0.0, 1.0, "topic", "正文。", "summary", [], [])])
     (paths.sections_dir / "001.md").write_text("[[TS:0.000]] 正文。\n", encoding="utf-8")
     return PipelineContext(source, "inputhash", "audio_only", _assemble_config(), paths, ArtifactBundle(audio=type("Audio", (), {"get_duration": lambda self: 1.0})()))
+
+
+def _assemble_ctx_with_visual(tmp_path: Path) -> PipelineContext:
+    source = tmp_path / "讲座.mp4"
+    source.write_bytes(b"video")
+    paths = build_paths(source, tmp_path / "cache", tmp_path / "output", "inputhash")
+    for directory in (paths.run_dir, paths.sections_dir, paths.output_dir, paths.visual_semantic_frames_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    (paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"image")
+    atomic_write_json(paths.outline_json, Outline([Chapter(1, "开场", "summary", 0, 0)]))
+    atomic_write_json(
+        paths.content_blocks_json,
+        [ContentBlock(0, 0.0, 1.0, "topic", "正文。", "summary", [], [VisualSlot(Path("000001.png"), "desc", "ppt", 0.0, 1.0, 0)])],
+    )
+    legacy_image_path = Path("..") / "cache" / "inputhash" / "visual" / "semantic_frames" / "000001.png"
+    (paths.sections_dir / "001.md").write_text(f"[[TS:0.000]] 正文。\n\n![desc]({legacy_image_path.as_posix()})\n", encoding="utf-8")
+    return PipelineContext(source, "inputhash", "multimodal", _assemble_config(), paths, ArtifactBundle(audio=type("Audio", (), {"get_duration": lambda self: 1.0})()))
 
 
 def _assemble_config() -> AppConfig:

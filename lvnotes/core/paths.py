@@ -90,6 +90,20 @@ def make_timestamped_output_path(output_note_md: Path, timestamp: str) -> Path:
     return output_note_md.with_name(f"{output_note_md.stem}-{timestamp}{output_note_md.suffix}")
 
 
+def make_output_assets_dir(output_note_md: Path) -> Path:
+    return output_note_md.with_name(f"{output_note_md.stem}_assets")
+
+
+def make_output_asset_path(output_note_md: Path, image_source_path: Path) -> Path:
+    if image_source_path.is_absolute() or ".." in image_source_path.parts:
+        raise ValueError("image_source_path must be relative and stay within visual assets")
+    return make_output_assets_dir(output_note_md) / image_source_path.name
+
+
+def make_output_markdown_image_path(output_note_md: Path, image_source_path: Path) -> Path:
+    return Path(os_path_relpath(make_output_asset_path(output_note_md, image_source_path), output_note_md.parent))
+
+
 def resolve_visual_raw_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
     return _resolve_visual_image_path(paths.visual_raw_frames_dir, image_source_path, "visual_raw_frames_dir")
 
@@ -117,8 +131,7 @@ def _resolve_visual_image_path(base_dir: Path, image_source_path: Path, root_nam
 
 
 def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
-    absolute = resolve_visual_image_path(paths, image_source_path)
-    return Path(os_path_relpath(absolute, paths.output_note_md.parent))
+    return make_output_markdown_image_path(paths.output_note_md, image_source_path)
 
 
 def os_path_relpath(path: Path, start: Path) -> str:

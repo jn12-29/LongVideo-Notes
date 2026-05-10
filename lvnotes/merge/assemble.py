@@ -1,11 +1,15 @@
 from datetime import datetime, timezone
 import logging
+import os
 import re
+import shutil
+from pathlib import Path
 
 from lvnotes.core.cache import atomic_write_text, build_cache_key, hash_file, hash_json
 from lvnotes.core.context import PipelineContext
-from lvnotes.core.paths import make_timestamped_output_path
+from lvnotes.core.paths import make_output_asset_path, make_output_markdown_image_path, make_timestamped_output_path, resolve_visual_image_path
 from lvnotes.core.pipeline import StageOutput
+from lvnotes.core.schemas import ContentBlock
 from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, render_timestamp
 
@@ -16,6 +20,7 @@ _REF_RE = re.compile(r"\[\[REF:(\d+)\]\]")
 _TS_RE = re.compile(r"\[\[TS:(\d+(?:\.\d+)?)(?:-\d+(?:\.\d+)?)?\]\]")
 _RENDERED_TS_PATTERN = r"(?:\[\d{2}:\d{2}:\d{2}\]\([^\)\n]+\)|\[\d{2}:\d{2}:\d{2}\](?!\())"
 _RENDERED_TS_RE = re.compile(_RENDERED_TS_PATTERN)
+_ASSEMBLE_LINK_POLICY = "output-assets-v1"
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -23,7 +28,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     blocks = read_blocks(ctx.paths.content_blocks_json)
     section_paths = [ctx.paths.sections_dir / f"{chapter.id:03d}.md" for chapter in outline.chapters]
     sections_hash = hash_json([hash_file(path) for path in section_paths])
-    cache_key = build_cache_key("assemble", {"mode": ctx.mode, "outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash, "config": hash_json(ctx.config.merge.assemble)})
+    cache_key = build_cache_key("assemble", {"mode": ctx.mode, "outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash, "config": hash_json(ctx.config.merge.assemble), "link_policy": _ASSEMBLE_LINK_POLICY})
     generated_at = datetime.now(timezone.utc)
     timestamped_output = make_timestamped_output_path(ctx.paths.output_note_md, _filename_timestamp(generated_at))
     output_paths = [ctx.paths.output_note_md, timestamped_output, ctx.paths.cache_note_md]
@@ -32,14 +37,14 @@ def run(ctx: PipelineContext) -> StageOutput:
         cached = cached_output("assemble", cached_output_paths, cache_key, manifest_output_path=ctx.paths.cache_note_md)
         if cached is not None:
             note = ctx.paths.cache_note_md.read_text(encoding="utf-8")
-            atomic_write_text(ctx.paths.output_note_md, note)
-            atomic_write_text(timestamped_output, note)
+            _write_output_note(ctx, ctx.paths.output_note_md, note, blocks)
+            _write_output_note(ctx, timestamped_output, note, blocks)
             return StageOutput("assemble", output_paths, True, hash_json(note), {**cached.metadata, "archived_output": str(timestamped_output)})
 
     note = _assemble_note(ctx, outline, blocks, section_paths, generated_at)
     atomic_write_text(ctx.paths.cache_note_md, note)
-    atomic_write_text(ctx.paths.output_note_md, note)
-    atomic_write_text(timestamped_output, note)
+    _write_output_note(ctx, ctx.paths.output_note_md, note, blocks)
+    _write_output_note(ctx, timestamped_output, note, blocks)
     output = cache_output("assemble", cached_output_paths, cache_key, {"mode": ctx.mode, "outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash}, hash_json(ctx.config.merge.assemble), None, manifest_output_path=ctx.paths.cache_note_md)
     return StageOutput(output.stage_name, output_paths, output.cache_hit, output.content_hash, {**output.metadata, "archived_output": str(timestamped_output)})
 
@@ -60,8 +65,46 @@ def _assemble_note(ctx: PipelineContext, outline, blocks, section_paths: list, g
         text = _render_refs(text, block_to_chapter, anchors)
         text = _render_timestamps(ctx, text)
         text = _normalize_markdown_spacing(text)
-        parts.append(f"## {chapter.title}\n{text.strip()}\n")
+        parts.append(f'<a id="{anchors[chapter.id]}"></a>\n## {chapter.title}\n{text.strip()}\n')
     return "\n".join(parts).rstrip() + "\n"
+
+
+def _write_output_note(ctx: PipelineContext, output_note_md: Path, note: str, blocks: list[ContentBlock]) -> None:
+    image_map = _publish_output_assets(ctx, output_note_md, blocks)
+    rendered = _rewrite_markdown_image_links(note, image_map)
+    atomic_write_text(output_note_md, rendered)
+
+
+def _publish_output_assets(ctx: PipelineContext, output_note_md: Path, blocks: list[ContentBlock]) -> dict[str, str]:
+    image_map: dict[str, str] = {}
+    seen: set[Path] = set()
+    for block in blocks:
+        for slot in block.visuals:
+            image_source_path = slot.image_source_path
+            if image_source_path in seen:
+                continue
+            seen.add(image_source_path)
+            source = resolve_visual_image_path(ctx.paths, image_source_path)
+            destination = make_output_asset_path(output_note_md, image_source_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            markdown_path = make_output_markdown_image_path(output_note_md, image_source_path).as_posix()
+            latest_markdown_path = make_output_markdown_image_path(ctx.paths.output_note_md, image_source_path).as_posix()
+            image_map[image_source_path.as_posix()] = markdown_path
+            image_map[str(image_source_path)] = markdown_path
+            image_map[source.as_posix()] = markdown_path
+            image_map[source.resolve().as_posix()] = markdown_path
+            image_map[Path(markdown_path).as_posix()] = markdown_path
+            image_map[latest_markdown_path] = markdown_path
+            legacy_markdown_path = Path(os.path.relpath(source, output_note_md.parent)).as_posix()
+            image_map[legacy_markdown_path] = markdown_path
+    return image_map
+
+
+def _rewrite_markdown_image_links(note: str, image_map: dict[str, str]) -> str:
+    for old, new in sorted(image_map.items(), key=lambda item: len(item[0]), reverse=True):
+        note = note.replace(f"]({old})", f"]({new})")
+    return note
 
 
 def _strip_section_heading(text: str, chapter_title: str) -> str:
