@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from pathlib import Path
 
@@ -6,9 +5,9 @@ from jinja2 import Template
 
 from lvnotes.core.cache import atomic_write_text, build_cache_key, hash_file, hash_json, hash_prompt_template
 from lvnotes.core.context import PipelineContext
+from lvnotes.core.parallel import run_parallel
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.paths import make_markdown_image_path
-from lvnotes.core.progress import progress_bar
 from lvnotes.core.schemas import Chapter, ContentBlock, Outline
 from lvnotes.llm import LLMMessage, LLMRequestOptions, TextPart, complete_text, for_task
 
@@ -40,15 +39,15 @@ def run(ctx: PipelineContext) -> StageOutput:
                 continue
         jobs.append((chapter, chapter_blocks, path, cache_key))
     if jobs:
-        with ThreadPoolExecutor(max_workers=ctx.config.merge.section.concurrent_calls) as executor:
-            futures = [
-                executor.submit(_write_section, ctx, template, outline, chapter, chapter_blocks, path, cache_key, config_hash, prompt_hash)
-                for chapter, chapter_blocks, path, cache_key in jobs
-            ]
-            with progress_bar(desc="merge.section", total=len(futures), unit="chapter") as bar:
-                for future in as_completed(futures):
-                    output_paths.append(future.result())
-                    bar.update(1)
+        output_paths.extend(
+            run_parallel(
+                jobs,
+                lambda job: _write_section(ctx, template, outline, job[0], job[1], job[2], job[3], config_hash, prompt_hash),
+                desc="merge.section",
+                unit="chapter",
+                max_workers=ctx.config.merge.section.concurrent_calls,
+            )
+        )
     output_paths.sort()
     content_hash = hash_json([hash_file(path) for path in output_paths])
     return StageOutput(

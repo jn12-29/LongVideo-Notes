@@ -43,6 +43,8 @@ def extract_frames(input_path: Path, output_dir: Path, fps: float, filename_patt
         tmp_paths = _matching_frame_paths(tmp_dir, filename_pattern)
         if not tmp_paths:
             raise MediaError(f"ffmpeg did not produce frames in {tmp_dir}")
+        for old_path in _matching_frame_paths(output_dir, filename_pattern):
+            old_path.unlink()
         for tmp_path in tmp_paths:
             os.replace(tmp_path, output_dir / tmp_path.name)
     finally:

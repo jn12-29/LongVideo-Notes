@@ -21,7 +21,7 @@
 
 **本阶段不知道两条管线的内部实现**——只通过 `ctx.artifacts.audio` / `ctx.artifacts.visual` 读取 `AudioArtifacts` / `VisualArtifacts`，禁止 `from audio_pipeline import ...` 或 `from visual_pipeline import ...`。`ctx.artifacts` 本身是 `ArtifactBundle`。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2 的强制结论。
 
-纯音频模式下 `VisualArtifacts is None`，唯一感知模式差异的是 `unify`，其余 stage 对模式无感。
+纯音频模式下 `VisualArtifacts is None`。`unify` 负责把模式差异归一到 `ContentBlock.visuals`;`assemble` 只读取 `ctx.mode` 写入 frontmatter 并参与 assemble cache key。
 
 ---
 
@@ -37,9 +37,9 @@
 
 与 audio segment stage 同套路。LLM 看所有 `ContentBlock` 的 summary，**只输出章节边界 + 标题 + 摘要**，不输出章节正文。章节正文由 section stage 按章独立生成。
 
-### 2.3 模式区分仅在 unify
+### 2.3 模式区分
 
-`unify` 是唯一感知"纯音频 / 多模"的 stage。下游 outline / section / assemble 输入都是统一的 `ContentBlock` 序列，对模式无感。
+`unify` 是唯一把"纯音频 / 多模"差异合并进内容块的 stage。下游 outline / section 输入都是统一的 `ContentBlock` 序列。`assemble` 不改变内容块,但会把 `ctx.mode` 写入 frontmatter,并把 mode 纳入 assemble cache key。
 
 ### 2.4 cross_refs 与时间戳渲染都用内部 marker + 纯逻辑替换
 
@@ -92,7 +92,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 *VisualSlot 挂入规则*（多模模式）：
 
-`VisualDescription` 已经由 describe stage 从 `VisualSelection` 复制了代表帧、时间区间、medium 与 meaningful 过滤后的结果,是 merge 阶段消费视觉信息的完整产物。unify 不读取 `get_selections()`。
+`VisualDescription` 已经由 describe stage 从 `VisualAlignment` 和对应 refined segment 复制了图片、时间区间、medium 与语义过滤后的结果,是 merge 阶段消费视觉信息的完整产物。unify 不读取 `alignments.json`。
 
 对每对 `(audio_segment, visual_description)`：
 
@@ -105,11 +105,11 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 跨越多个 audio 段的 visual description 会在每个被跨越的 ContentBlock 内各挂一个 VisualSlot（指向同一张 frame 和同一段 description，但时间区间各自 clip）。一个 audio 段内的多个 visual description 全部挂上，按时间排序。
 
-*纯音频模式*：直接走以 audio 为骨架那条路径，`visuals=[]` 即可。
+*纯音频模式*：直接走以 audio 为骨架那条路径，`visuals=[]` 即可。`unify` 按 `PipelineContext.mode` 判断本次运行模式,纯音频模式强制忽略 visual artifacts;多模模式要求 visual descriptions 可读取。
 
 **配置项**：无。
 
-**缓存键**：调用 `build_cache_key("unify", {"refined": hash_json(RefinedTranscript), "visual": visual_hash})`。`visual_hash` 在多模模式下是 descriptions 的内容 hash；纯音频模式下是固定标记 `"audio_only"`。
+**缓存键**：调用 `build_cache_key("unify", {"refined": hash_json(RefinedTranscript), "visual": visual_hash})`。`visual_hash` 在多模模式下总是 descriptions 的内容 hash,即使 descriptions 为空列表；纯音频模式下是固定标记 `"audio_only"`。
 
 **错误处理**：
 - ContentBlock 不变量校验（见 §4 不变量）违反 → `AssertionError`（属内部 bug，不 catch）
@@ -171,7 +171,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 渲染形态（可读时间戳格式 / 是否生成跳转链接 / URL template）全部由 assemble 阶段按配置决定，本 stage 不感知。
 
-*视觉内容渲染*：多模模式下,visuals 列表中每个 VisualSlot 在该 block 对应位置插入 markdown 图片引用：
+*视觉内容渲染*：多模模式下,visuals 列表中每个 VisualSlot 在该 block 对应位置插入 markdown 图片引用。section prompt 必须要求 LLM 对每条 Visual 输入原样保留一条图片 Markdown,不得省略或改写路径：
 
 ```markdown
 ![visual description](relative/path/to/frame.png)
@@ -297,7 +297,7 @@ YAML frontmatter 包含元信息，VSCode/Obsidian/Jekyll 等 markdown 工具通
 - `video_url_template: str | None` —— 默认 `None`（时间戳保持纯文本）
 - `top_title: str | None` —— 默认 `None`，未配置时从输入文件名派生
 
-**缓存键**：调用 `build_cache_key("assemble", {"outline": hash_json(Outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": hash_json(所有 sections/*.md 的内容 hash 列表), "config": hash_json(assemble 配置)})`。
+**缓存键**：调用 `build_cache_key("assemble", {"mode": ctx.mode, "outline": hash_json(Outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": hash_json(所有 sections/*.md 的内容 hash 列表), "config": hash_json(assemble 配置)})`。
 
 **错误处理**：
 - cross_refs 引用不存在 → WARNING 日志 + 降级为 1-based 纯文本 `§{N+1}`，不阻塞（见上）
@@ -318,9 +318,9 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class VisualSlot:
-    image_source_path: Path         # 代表帧文件路径，相对 cache/{input_hash}/visual/frames/
+    image_source_path: Path         # 语义过滤后帧文件路径，相对 cache/{input_hash}/visual/semantic_frames/
     description: str                # 强 VLM 输出的图文联合描述
-    medium: str                     # judge 阶段输出，"ppt" / "blackboard" / "code" / "demo" / "other"
+    medium: str                     # semantic_filter 阶段输出，"ppt" / "blackboard" / "code" / "demo" / "chart" / "table" / "speaker" / "blank" / "ui" / "other"
     start: float                    # clip 到所属 ContentBlock 区间内的起点
     end: float                      # clip 到所属 ContentBlock 区间内的终点
     visual_segment_id: int          # 对应的 VisualDescription.segment_id，便于回溯

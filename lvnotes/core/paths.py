@@ -15,16 +15,20 @@ class PipelinePaths:
     run_dir: Path
     audio_dir: Path
     visual_dir: Path
-    visual_frames_dir: Path
+    visual_raw_frames_dir: Path
+    visual_filter_frames_dir: Path
+    visual_filter_variants_dir: Path
+    visual_semantic_frames_dir: Path
     debug_dir: Path
     refined_dir: Path
     sections_dir: Path
     audio_wav: Path
     audio_extract_json: Path
     visual_sample_json: Path
-    visual_segments_json: Path
-    visual_judgements_json: Path
-    visual_selections_json: Path
+    visual_filtered_sample_json: Path
+    visual_semantic_sample_json: Path
+    visual_semantic_judgements_json: Path
+    visual_alignments_json: Path
     visual_descriptions_json: Path
     transcript_raw_json: Path
     segments_json: Path
@@ -47,16 +51,20 @@ def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash
         run_dir=run_dir,
         audio_dir=audio_dir,
         visual_dir=visual_dir,
-        visual_frames_dir=visual_dir / "frames",
+        visual_raw_frames_dir=visual_dir / "raw_frames",
+        visual_filter_frames_dir=visual_dir / "filter_frames",
+        visual_filter_variants_dir=visual_dir / "filter_variants",
+        visual_semantic_frames_dir=visual_dir / "semantic_frames",
         debug_dir=run_dir / "debug",
         refined_dir=run_dir / "refined",
         sections_dir=run_dir / "sections",
         audio_wav=audio_dir / "audio.wav",
         audio_extract_json=audio_dir / "extract.json",
         visual_sample_json=visual_dir / "sample.json",
-        visual_segments_json=visual_dir / "segments.json",
-        visual_judgements_json=visual_dir / "judgements.json",
-        visual_selections_json=visual_dir / "selections.json",
+        visual_filtered_sample_json=visual_dir / "filtered_sample.json",
+        visual_semantic_sample_json=visual_dir / "semantic_sample.json",
+        visual_semantic_judgements_json=visual_dir / "semantic_judgements.json",
+        visual_alignments_json=visual_dir / "alignments.json",
         visual_descriptions_json=visual_dir / "descriptions.json",
         transcript_raw_json=run_dir / "transcript_raw.json",
         segments_json=run_dir / "segments.json",
@@ -81,10 +89,30 @@ def make_timestamped_output_path(output_note_md: Path, timestamp: str) -> Path:
     return output_note_md.with_name(f"{output_note_md.stem}-{timestamp}{output_note_md.suffix}")
 
 
+def resolve_visual_raw_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
+    return _resolve_visual_image_path(paths.visual_raw_frames_dir, image_source_path, "visual_raw_frames_dir")
+
+
+def resolve_visual_filter_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
+    return _resolve_visual_image_path(paths.visual_filter_frames_dir, image_source_path, "visual_filter_frames_dir")
+
+
+def resolve_visual_semantic_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
+    return _resolve_visual_image_path(paths.visual_semantic_frames_dir, image_source_path, "visual_semantic_frames_dir")
+
+
 def resolve_visual_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
+    return resolve_visual_semantic_image_path(paths, image_source_path)
+
+
+def _resolve_visual_image_path(base_dir: Path, image_source_path: Path, root_name: str) -> Path:
     if image_source_path.is_absolute():
-        raise ValueError("image_source_path must be relative to visual_frames_dir")
-    return (paths.visual_frames_dir / image_source_path).resolve()
+        raise ValueError(f"image_source_path must be relative to {root_name}")
+    base = base_dir.resolve()
+    resolved = (base / image_source_path).resolve()
+    if resolved != base and base not in resolved.parents:
+        raise ValueError(f"image_source_path must stay within {root_name}")
+    return resolved
 
 
 def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:

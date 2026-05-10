@@ -23,7 +23,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     blocks = read_blocks(ctx.paths.content_blocks_json)
     section_paths = [ctx.paths.sections_dir / f"{chapter.id:03d}.md" for chapter in outline.chapters]
     sections_hash = hash_json([hash_file(path) for path in section_paths])
-    cache_key = build_cache_key("assemble", {"outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash, "config": hash_json(ctx.config.merge.assemble)})
+    cache_key = build_cache_key("assemble", {"mode": ctx.mode, "outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash, "config": hash_json(ctx.config.merge.assemble)})
     generated_at = datetime.now(timezone.utc)
     timestamped_output = make_timestamped_output_path(ctx.paths.output_note_md, _filename_timestamp(generated_at))
     output_paths = [ctx.paths.output_note_md, timestamped_output, ctx.paths.cache_note_md]
@@ -40,7 +40,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     atomic_write_text(ctx.paths.cache_note_md, note)
     atomic_write_text(ctx.paths.output_note_md, note)
     atomic_write_text(timestamped_output, note)
-    output = cache_output("assemble", cached_output_paths, cache_key, {"outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash}, hash_json(ctx.config.merge.assemble), None, manifest_output_path=ctx.paths.cache_note_md)
+    output = cache_output("assemble", cached_output_paths, cache_key, {"mode": ctx.mode, "outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash}, hash_json(ctx.config.merge.assemble), None, manifest_output_path=ctx.paths.cache_note_md)
     return StageOutput(output.stage_name, output_paths, output.cache_hit, output.content_hash, {**output.metadata, "archived_output": str(timestamped_output)})
 
 

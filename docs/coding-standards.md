@@ -205,8 +205,8 @@ if phash_distance > 15:
     new_segment()
 
 # 正确
-if phash_distance > config.cluster.phash_high_threshold:
-    new_segment()
+if phash_distance > config.visual_pipeline.filter.phash_threshold:
+    keep_frame()
 ```
 
 允许的字面量:

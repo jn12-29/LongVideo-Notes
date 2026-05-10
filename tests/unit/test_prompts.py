@@ -29,6 +29,8 @@ def test_refine_prompts_describe_lecture_scene_and_pronunciation_corrections() -
         assert "咸味" in text
         assert "纤维" in text
         assert "Do not invent names, facts, years, awards, or technical terms" in text
+        assert "Write topic, cleaned_text, and summary in Simplified Chinese" in text
+        assert "Keep English technical terms" in text
         assert not _contains_asr_style(text)
 
 
@@ -41,7 +43,11 @@ def test_structure_prompts_describe_lecture_note_tasks() -> None:
     assert "Avoid creating very short units" in segment
     assert "chapter outline for notes from a Chinese lecture" in outline
     assert "Do not make every block its own chapter" in outline
-    assert "Write every chapter title and summary in Chinese" in outline
+    assert "Write every chapter title and summary in Simplified Chinese" in outline
+    assert "Keep English technical terms" in segment
+    assert "Keep English technical terms" in outline
+    assert "Keep English technical terms" in section
+    assert "Do not translate established English terms mechanically" in segment
     assert "Chapter id is 1-based" in outline
     assert "Block ids are 0-based consecutive ids" in outline
     assert "previous chapter's block_id_end + 1" in outline
@@ -55,3 +61,16 @@ def test_structure_prompts_describe_lecture_note_tasks() -> None:
     assert "Do not place timestamp markers at the end" in section
     assert "in the middle of a sentence" in section
     assert "Do not include an end time or timestamp range" in section
+    assert "copy every Visual markdown image" in section
+    assert "preserving the image path and alt text" in section
+
+
+def test_visual_prompts_require_chinese_but_preserve_english_terms() -> None:
+    describe = _prompt("lvnotes/visual_pipeline/prompts/describe.jinja")
+    semantic = _prompt("lvnotes/visual_pipeline/prompts/semantic_filter.jinja")
+
+    assert "Write description in Simplified Chinese" in describe
+    assert "complete, meaningful sentence" in describe
+    assert "Write reason in Simplified Chinese" in semantic
+    assert "Keep English technical terms" in describe
+    assert "Keep English technical terms" in semantic

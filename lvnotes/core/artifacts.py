@@ -10,11 +10,10 @@ from lvnotes.core.schemas import (
     RefinedTranscript,
     SegmentList,
     Transcript,
+    VisualAlignment,
     VisualDescriptionList,
-    VisualJudgementList,
     VisualSampleIndex,
-    VisualSegmentList,
-    VisualSelection,
+    VisualSemanticJudgementList,
 )
 from lvnotes.core.transcript import slice_transcript_text
 
@@ -98,9 +97,10 @@ class VisualArtifacts:
         self.input_hash = input_hash
         self.paths = paths
         self._samples: VisualSampleIndex | None = None
-        self._segments: VisualSegmentList | None = None
-        self._judgements: VisualJudgementList | None = None
-        self._selections: list[VisualSelection] | None = None
+        self._filtered_samples: VisualSampleIndex | None = None
+        self._semantic_samples: VisualSampleIndex | None = None
+        self._semantic_judgements: VisualSemanticJudgementList | None = None
+        self._alignments: list[VisualAlignment] | None = None
         self._descriptions: VisualDescriptionList | None = None
 
     def get_samples(self) -> VisualSampleIndex:
@@ -108,20 +108,25 @@ class VisualArtifacts:
             self._samples = _read_required(self.paths.visual_sample_json, VisualSampleIndex, "visual_sample")
         return self._samples
 
-    def get_segments(self) -> VisualSegmentList:
-        if self._segments is None:
-            self._segments = _read_required(self.paths.visual_segments_json, VisualSegmentList, "visual_cluster")
-        return self._segments
+    def get_filtered_samples(self) -> VisualSampleIndex:
+        if self._filtered_samples is None:
+            self._filtered_samples = _read_required(self.paths.visual_filtered_sample_json, VisualSampleIndex, "visual_filter")
+        return self._filtered_samples
 
-    def get_judgements(self) -> VisualJudgementList:
-        if self._judgements is None:
-            self._judgements = _read_required(self.paths.visual_judgements_json, VisualJudgementList, "visual_judge")
-        return self._judgements
+    def get_semantic_samples(self) -> VisualSampleIndex:
+        if self._semantic_samples is None:
+            self._semantic_samples = _read_required(self.paths.visual_semantic_sample_json, VisualSampleIndex, "visual_semantic_filter")
+        return self._semantic_samples
 
-    def get_selections(self) -> list[VisualSelection]:
-        if self._selections is None:
-            self._selections = _read_required(self.paths.visual_selections_json, list[VisualSelection], "visual_select")  # type: ignore[assignment]
-        return self._selections
+    def get_semantic_judgements(self) -> VisualSemanticJudgementList:
+        if self._semantic_judgements is None:
+            self._semantic_judgements = _read_required(self.paths.visual_semantic_judgements_json, VisualSemanticJudgementList, "visual_semantic_filter")
+        return self._semantic_judgements
+
+    def get_alignments(self) -> list[VisualAlignment]:
+        if self._alignments is None:
+            self._alignments = _read_required(self.paths.visual_alignments_json, list[VisualAlignment], "visual_align")  # type: ignore[assignment]
+        return self._alignments
 
     def get_descriptions(self) -> VisualDescriptionList:
         if self._descriptions is None:

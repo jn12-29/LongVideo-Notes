@@ -47,6 +47,33 @@ def test_trim_media_head_creates_output_atomically(monkeypatch, tmp_path: Path) 
     assert command_args[4:10] == ["-t", "150", "-map", "0", "-c", "copy"]
 
 
+def test_trim_media_head_uses_output_lock(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "lecture.mp4"
+    source.write_bytes(b"source")
+    lock_targets: list[Path] = []
+
+    class Lock:
+        def __init__(self, output_path: Path) -> None:
+            self.output_path = output_path
+
+        def __enter__(self):
+            lock_targets.append(self.output_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def run_command(args: list[str], tool_name: str) -> None:
+        Path(args[-1]).write_bytes(b"trimmed")
+
+    monkeypatch.setattr(trim, "trim_output_lock", lambda output_path: Lock(output_path))
+    monkeypatch.setattr(trim, "probe_media", lambda path: SimpleNamespace(audio=object()))
+    monkeypatch.setattr(trim, "_run_command", run_command)
+
+    output = trim.trim_media_head(source, 10.0)
+
+    assert lock_targets == [output]
+
+
 def test_resolve_head_trim_path_requires_existing_trim(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     source = tmp_path / "lecture.mp4"
     source.write_bytes(b"source")

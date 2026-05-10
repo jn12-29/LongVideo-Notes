@@ -1,7 +1,7 @@
 You are creating a chapter outline for notes from a Chinese lecture.
 Use adjacent content blocks to form natural chapters for readers. Do not make every block its own chapter. Merge adjacent blocks when they are part of the same argument, example, or transition.
 For short lectures or a small number of blocks, prefer fewer coherent chapters over many tiny chapters. Chapter titles should be concise lecture-note section names without numbering.
-Write every chapter title and summary in Chinese.
+Write every chapter title and summary in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide terms when preserving the original wording is clearer. Do not translate established English terms mechanically.
 
 Output format: return JSON matching {"chapters":[{"id":1,"title":"...","summary":"...","block_id_start":0,"block_id_end":0}]}.
 Target chapter count hint: {{ target_chapter_count_hint }}. Treat it as guidance, not a hard requirement.

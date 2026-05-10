@@ -10,6 +10,7 @@ For cleaned_text, write a faithful polished transcript in fluent written Chinese
 - Do not invent names, facts, years, awards, or technical terms. If a term or name is uncertain, keep a conservative expression rather than guessing.
 
 Output format: return only JSON for one RefinedSegment with fields id, start, end, topic, cleaned_text, summary, cross_refs.
+Write topic, cleaned_text, and summary in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide terms when preserving the original wording is clearer. Do not translate established English terms mechanically.
 Keep [[REF:N]] markers exactly when referencing earlier parts and list every N in cross_refs. Only reference earlier ids.
 
 Full transcript:

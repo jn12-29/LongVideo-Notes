@@ -48,6 +48,7 @@ def test_app_config_validates_minimal_config() -> None:
     assert config.audio_pipeline.extract.sample_rate == 16000
     assert config.audio_pipeline.refine.mode == "adaptive"
     assert config.audio_pipeline.refine.batch_size == 8
+    assert config.visual_pipeline.describe.concurrent_calls == 5
 
 
 @pytest.mark.parametrize("field", ["rpm_limit", "tpm_limit"])
@@ -78,6 +79,22 @@ def test_refine_config_validates_mode_and_batch_size() -> None:
     payload["audio_pipeline"] = {"refine": {"mode": "invalid", "batch_size": 0}}
 
     with pytest.raises(ValueError):
+        AppConfig.model_validate(payload)
+
+
+def test_visual_describe_concurrent_calls_must_be_positive() -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"describe": {"concurrent_calls": 0}}
+
+    with pytest.raises(ValueError, match="concurrent_calls"):
+        AppConfig.model_validate(payload)
+
+
+def test_merge_section_concurrent_calls_must_be_positive() -> None:
+    payload = _minimal_config()
+    payload["merge"] = {"section": {"concurrent_calls": 0}}
+
+    with pytest.raises(ValueError, match="concurrent_calls"):
         AppConfig.model_validate(payload)
 
 
@@ -125,3 +142,63 @@ def test_unknown_task_is_rejected() -> None:
 def test_load_config_missing_file_raises_config_error() -> None:
     with pytest.raises(ConfigError):
         load_config(Path("does-not-exist.yaml"))
+
+
+def test_load_config_loads_filter_variants_file_relative_to_config(tmp_path: Path) -> None:
+    variants = tmp_path / "variants.yaml"
+    variants.write_text(
+        """
+variants:
+  - name: default
+    phash_threshold: 7
+""".lstrip(),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"filter": {"variants_file": "variants.yaml"}}
+    config_path.write_text(__import__("yaml").safe_dump(payload), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.visual_pipeline.filter.variants_file == variants
+    assert config.filter_variants is not None
+    assert config.filter_variants.variants[0].name == "default"
+    assert config.filter_variants.variants[0].phash_threshold == 7
+
+
+def test_filter_variant_names_must_be_unique() -> None:
+    payload = _minimal_config()
+    payload["filter_variants"] = {"variants": [{"name": "same"}, {"name": "same"}]}
+
+    with pytest.raises(ValueError, match="unique"):
+        AppConfig.model_validate(payload)
+
+
+def test_filter_variant_name_must_be_safe() -> None:
+    payload = _minimal_config()
+    payload["filter_variants"] = {"variants": [{"name": "bad/name"}]}
+
+    with pytest.raises(ValueError, match="variant name"):
+        AppConfig.model_validate(payload)
+
+
+def test_active_filter_variant_must_exist() -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"filter": {"active_variant": "missing"}}
+    payload["filter_variants"] = {"variants": [{"name": "default"}]}
+
+    with pytest.raises(ValueError, match="active_variant"):
+        AppConfig.model_validate(payload)
+
+
+def test_active_filter_variant_must_exist_in_loaded_variants_file(tmp_path: Path) -> None:
+    variants = tmp_path / "variants.yaml"
+    variants.write_text("variants:\n  - name: default\n", encoding="utf-8")
+    config_path = tmp_path / "config.yaml"
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"filter": {"active_variant": "missing", "variants_file": "variants.yaml"}}
+    config_path.write_text(__import__("yaml").safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="active_variant"):
+        load_config(config_path)

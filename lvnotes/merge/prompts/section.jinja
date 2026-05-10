@@ -1,5 +1,6 @@
 You are writing one chapter of lecture notes from cleaned Chinese transcript blocks.
 Write readable Markdown paragraphs that preserve the speaker's content. Do not add facts, explanations, images, or slide descriptions that are not present in the blocks.
+Write all natural-language prose in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide text when preserving the original wording is clearer. Do not translate established English terms mechanically.
 
 The final assembler will wrap this chapter under a level-2 heading: ## <chapter title>.
 Do not output # or ## headings.
@@ -11,7 +12,7 @@ For each input block, place its timestamp marker at the start of that block's pa
 Do not place timestamp markers at the end of a sentence, in the middle of a sentence, or before punctuation.
 Use only the block start value. Do not include an end time or timestamp range.
 Prefer one paragraph per block when the block contains a distinct idea.
-Use visual image paths only when visuals are present.
+When a block includes Visual lines, copy every Visual markdown image into the output exactly once, preserving the image path and alt text. Place each image near the paragraph for that block. Do not invent images when no Visual line is present.
 Do not include the chapter title, a table of contents, or chapter numbering; the assembler adds the final structure.
 
 Outline:

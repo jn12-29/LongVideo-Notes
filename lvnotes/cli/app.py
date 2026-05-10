@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 import logging
 from pathlib import Path
@@ -12,13 +13,15 @@ from lvnotes.core.cache import hash_file
 from lvnotes.core.config import load_config
 from lvnotes.core.context import ArtifactBundle, PipelineContext
 from lvnotes.core.exceptions import CacheError, LVNotesError
+from lvnotes.core.locks import input_cache_lock
 from lvnotes.core.logging import configure_logging
 from lvnotes.core.paths import PipelinePaths, build_paths
 from lvnotes.core.progress import progress_write
 from lvnotes.media.probe import probe_media
 from lvnotes.media.trim import resolve_head_trim_path, trim_media_head
 from lvnotes.merge import assemble, outline, section, unify
-from lvnotes.visual_pipeline import cluster, describe, judge, sample, select
+from lvnotes.visual_pipeline import align, describe, filter, sample, semantic_filter
+from lvnotes.llm import for_task
 
 log = logging.getLogger(__name__)
 StageRun = Callable[[PipelineContext], object]
@@ -37,9 +40,9 @@ AUDIO_STAGES: dict[str, StageRun] = {
 }
 VISUAL_STAGES: dict[str, StageRun] = {
     "sample": sample.run,
-    "cluster": cluster.run,
-    "judge": judge.run,
-    "select": select.run,
+    "filter": filter.run,
+    "semantic-filter": semantic_filter.run,
+    "align": align.run,
     "describe": describe.run,
 }
 MERGE_STAGES: dict[str, StageRun] = {
@@ -54,10 +57,10 @@ STAGE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "transcribe": ("cache/{input_hash}/transcript_raw.json",),
     "segment": ("cache/{input_hash}/segments.json",),
     "refine": ("cache/{input_hash}/refined_transcript.json", "cache/{input_hash}/refined/{seg_id:04d}.json"),
-    "sample": ("cache/{input_hash}/visual/frames/", "cache/{input_hash}/visual/sample.json"),
-    "cluster": ("cache/{input_hash}/visual/segments.json",),
-    "judge": ("cache/{input_hash}/visual/judgements.json",),
-    "select": ("cache/{input_hash}/visual/selections.json",),
+    "sample": ("cache/{input_hash}/visual/raw_frames/", "cache/{input_hash}/visual/sample.json"),
+    "filter": ("cache/{input_hash}/visual/filter_frames/", "cache/{input_hash}/visual/filtered_sample.json", "cache/{input_hash}/visual/filter_variants/"),
+    "semantic-filter": ("cache/{input_hash}/visual/semantic_frames/", "cache/{input_hash}/visual/semantic_sample.json", "cache/{input_hash}/visual/semantic_judgements.json"),
+    "align": ("cache/{input_hash}/visual/alignments.json",),
     "describe": ("cache/{input_hash}/visual/descriptions.json",),
     "unify": ("cache/{input_hash}/content_blocks.json",),
     "outline": ("cache/{input_hash}/outline.json",),
@@ -127,23 +130,27 @@ def run_command(input_file: Path, config_path: Path | None, mm: bool, head_minut
 
     \b
     Multimodal extras with --mm:
-      cache/{input_hash}/visual/frames/ and visual/sample.json
-      cache/{input_hash}/visual/segments.json, visual/judgements.json, visual/selections.json, visual/descriptions.json
+      cache/{input_hash}/visual/raw_frames/ and visual/sample.json
+      cache/{input_hash}/visual/filter_frames/, visual/filtered_sample.json, and visual/filter_variants/
+      cache/{input_hash}/visual/semantic_frames/, visual/semantic_sample.json, visual/semantic_judgements.json
+      cache/{input_hash}/visual/alignments.json and visual/descriptions.json
     """
-    ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False, head_minutes=head_minutes, create_trim=True)
-    _echo_run_header(ctx)
-    if ctx.mode == "multimodal":
-        _run_multimodal_upstream(ctx, debug)
-        if not ctx.artifacts.audio.is_complete():
-            raise click.ClickException("visual describe requires completed audio refine stage")
-        _run_stage(ctx, describe.run)
-    else:
-        _run_audio_upstream(ctx, debug)
-    assemble_output = _run_stage_sequence(ctx, [unify.run, outline.run, section.run, assemble.run])
-    output_paths = getattr(assemble_output, "output_paths", [ctx.paths.output_note_md])
-    progress_write("Output:")
-    for path in output_paths:
-        progress_write(str(path))
+    ctx = _make_context(input_file, config_path, mm, no_cache, False, require_mm=False, head_minutes=head_minutes, create_trim=True, create_dirs=False)
+    with _input_cache_lock(ctx):
+        _echo_run_header(ctx)
+        if ctx.mode == "multimodal":
+            _validate_multimodal_llm_profiles(ctx)
+            _run_multimodal_upstream(ctx, debug)
+            if not ctx.artifacts.audio.is_complete():
+                raise click.ClickException("visual describe requires completed audio refine stage")
+            _run_stage(ctx, describe.run)
+        else:
+            _run_audio_upstream(ctx, debug)
+        assemble_output = _run_stage_sequence(ctx, [unify.run, outline.run, section.run, assemble.run])
+        output_paths = getattr(assemble_output, "output_paths", [ctx.paths.output_note_md])
+        progress_write("Output:")
+        for path in output_paths:
+            progress_write(str(path))
 
 
 @main.command("inspect", short_help="Inspect existing artifacts without running stages.")
@@ -164,10 +171,10 @@ def inspect_command(namespace: str, stage: str, input_file: Path, config_path: P
     \b
     Inspect does not generate files; it only reads existing artifacts:
       audio: extract, transcript, segments, refined
-      visual: sample, cluster, judge, select, describe
+      visual: sample, filter, filter-variants, semantic-filter, semantic-judgements, align, describe
       merge: blocks, unify, outline, note, assemble
     """
-    ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False, head_minutes=head_minutes, create_trim=False)
+    ctx = _make_context(input_file, config_path, mm, False, False, require_mm=False, head_minutes=head_minutes, create_trim=False, create_dirs=False)
     path = _inspect_path(ctx, namespace, stage)
     if paths_only:
         click.echo(path)
@@ -205,13 +212,14 @@ def _stage_command(stage_name: str, stage_run: StageRun, require_mm: bool) -> cl
     @click.option("--no-cache", is_flag=True)
     @click.option("--debug", is_flag=True)
     def command(input_file: Path, config_path: Path | None, mm: bool, head_minutes: float | None, no_cache: bool, debug: bool) -> None:
-        ctx = _make_context(input_file, config_path, mm, no_cache, debug and stage_name == "refine", require_mm=require_mm, head_minutes=head_minutes, create_trim=True)
-        if stage_name == "describe" and not ctx.artifacts.audio.is_complete():
-            raise click.ClickException(str(CacheError("visual describe requires completed audio refine stage; run refine first")))
-        output = _run_stage(ctx, stage_run)
-        paths = getattr(output, "output_paths", [])
-        for path in paths:
-            progress_write(str(path))
+        ctx = _make_context(input_file, config_path, mm, no_cache, debug and stage_name == "refine", require_mm=require_mm, head_minutes=head_minutes, create_trim=True, create_dirs=False)
+        with _input_cache_lock(ctx):
+            if stage_name == "describe" and not ctx.artifacts.audio.is_complete():
+                raise click.ClickException(str(CacheError("visual describe requires completed audio refine stage; run refine first")))
+            output = _run_stage(ctx, stage_run)
+            paths = getattr(output, "output_paths", [])
+            for path in paths:
+                progress_write(str(path))
 
     return command
 
@@ -247,6 +255,7 @@ def _make_context(
     require_mm: bool,
     head_minutes: float | None = None,
     create_trim: bool = True,
+    create_dirs: bool = True,
 ) -> PipelineContext:
     try:
         configure_logging(debug)
@@ -266,9 +275,12 @@ def _make_context(
         mode = "multimodal" if mm and probe.video is not None else "audio_only"
         input_hash = hash_file(source_path)
         paths = build_paths(source_path, config.project.cache_dir, config.project.output_dir, input_hash)
-        _ensure_runtime_dirs(paths)
+        if create_dirs:
+            _ensure_runtime_dirs(paths)
         artifacts = ArtifactBundle(audio=AudioArtifacts(input_hash, paths), visual=VisualArtifacts(input_hash, paths) if mode == "multimodal" else None)
         return PipelineContext(source_path, input_hash, mode, config, paths, artifacts, debug, no_cache)
+    except click.ClickException:
+        raise
     except LVNotesError as exc:
         log.error("command failed: %s", exc)
         raise click.ClickException(str(exc)) from exc
@@ -282,13 +294,29 @@ def _ensure_runtime_dirs(paths: PipelinePaths) -> None:
         paths.run_dir,
         paths.audio_dir,
         paths.visual_dir,
-        paths.visual_frames_dir,
+        paths.visual_raw_frames_dir,
+        paths.visual_filter_frames_dir,
+        paths.visual_filter_variants_dir,
+        paths.visual_semantic_frames_dir,
         paths.debug_dir,
         paths.refined_dir,
         paths.sections_dir,
         paths.output_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def _input_cache_lock(ctx: PipelineContext):
+    try:
+        progress_write(f"cache lock: waiting {ctx.paths.run_dir / '.lvnotes.lock'}")
+        with input_cache_lock(ctx.paths.run_dir):
+            progress_write("cache lock: acquired")
+            _ensure_runtime_dirs(ctx.paths)
+            yield
+    except LVNotesError as exc:
+        log.error("command failed: %s", exc)
+        raise click.ClickException(str(exc)) from exc
 
 
 def _run_stage_sequence(ctx: PipelineContext, stages: list[StageRun]) -> object | None:
@@ -304,7 +332,7 @@ def _run_audio_upstream(ctx: PipelineContext, debug: bool) -> None:
 
 
 def _run_visual_upstream(ctx: PipelineContext) -> None:
-    _run_stage_sequence(ctx, [sample.run, cluster.run, judge.run, select.run])
+    _run_stage_sequence(ctx, [sample.run, filter.run, semantic_filter.run])
 
 
 def _run_multimodal_upstream(ctx: PipelineContext, debug: bool) -> None:
@@ -313,6 +341,12 @@ def _run_multimodal_upstream(ctx: PipelineContext, debug: bool) -> None:
         visual_future = executor.submit(_run_visual_upstream, ctx)
         audio_future.result()
         visual_future.result()
+    _run_stage(ctx, align.run)
+
+
+def _validate_multimodal_llm_profiles(ctx: PipelineContext) -> None:
+    for_task(ctx.config, "slide_judge")
+    for_task(ctx.config, "slide_describe")
 
 
 def _run_stage(ctx: PipelineContext, stage_run: StageRun) -> object:
@@ -361,9 +395,11 @@ def _inspect_path(ctx: PipelineContext, namespace: str, stage: str) -> Path:
         ("audio", "segments"): ctx.paths.segments_json,
         ("audio", "refined"): ctx.paths.refined_transcript_json,
         ("visual", "sample"): ctx.paths.visual_sample_json,
-        ("visual", "cluster"): ctx.paths.visual_segments_json,
-        ("visual", "judge"): ctx.paths.visual_judgements_json,
-        ("visual", "select"): ctx.paths.visual_selections_json,
+        ("visual", "filter"): ctx.paths.visual_filtered_sample_json,
+        ("visual", "semantic-filter"): ctx.paths.visual_semantic_sample_json,
+        ("visual", "semantic-judgements"): ctx.paths.visual_semantic_judgements_json,
+        ("visual", "align"): ctx.paths.visual_alignments_json,
+        ("visual", "filter-variants"): ctx.paths.visual_filter_variants_dir / "summary.json",
         ("visual", "describe"): ctx.paths.visual_descriptions_json,
         ("merge", "blocks"): ctx.paths.content_blocks_json,
         ("merge", "unify"): ctx.paths.content_blocks_json,

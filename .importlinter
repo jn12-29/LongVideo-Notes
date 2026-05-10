@@ -1,5 +1,6 @@
 [importlinter]
 root_package = lvnotes
+include_external_packages = True
 
 [importlinter:contract:core-no-business]
 name = Core must not import business modules
@@ -83,7 +84,5 @@ forbidden_modules =
 ignore_imports =
     lvnotes.media.probe -> subprocess
     lvnotes.llm.openai_chat -> openai
-    lvnotes.llm.openai_responses -> openai
-    lvnotes.llm.openai_compatible_chat -> openai
     lvnotes.llm.anthropic_messages -> anthropic
     lvnotes.asr.faster_whisper_local -> faster_whisper

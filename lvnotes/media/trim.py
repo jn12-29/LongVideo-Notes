@@ -3,6 +3,7 @@ import os
 import tempfile
 
 from lvnotes.core.exceptions import MediaError
+from lvnotes.core.locks import trim_output_lock
 from lvnotes.media.probe import _ensure_output_file, _run_command, probe_media
 
 
@@ -10,10 +11,15 @@ def trim_media_head(input_path: Path, head_minutes: float, reuse: bool = True) -
     if head_minutes <= 0:
         raise MediaError("--head-minutes must be greater than 0")
     output_path = make_head_trim_path(input_path, head_minutes)
-    if reuse and output_path.exists():
-        _validate_trimmed_media(output_path)
+    with trim_output_lock(output_path):
+        if reuse and output_path.exists():
+            _validate_trimmed_media(output_path)
+            return output_path
+        _create_head_trim(input_path, output_path, head_minutes)
         return output_path
 
+
+def _create_head_trim(input_path: Path, output_path: Path, head_minutes: float) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f".{output_path.stem}.", suffix=output_path.suffix, dir=output_path.parent)
     os.close(fd)
     tmp_path = Path(tmp_name)
@@ -40,7 +46,6 @@ def trim_media_head(input_path: Path, head_minutes: float, reuse: bool = True) -
         os.replace(tmp_path, output_path)
     finally:
         tmp_path.unlink(missing_ok=True)
-    return output_path
 
 
 def resolve_head_trim_path(input_path: Path, head_minutes: float) -> Path:

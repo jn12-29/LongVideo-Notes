@@ -14,12 +14,10 @@ from lvnotes.core.schemas.visual import (
     SampledFrame,
     VisualDescription,
     VisualDescriptionList,
-    VisualJudgement,
-    VisualJudgementList,
+    VisualAlignment,
     VisualSampleIndex,
-    VisualSegment,
-    VisualSegmentList,
-    VisualSelection,
+    VisualSemanticJudgement,
+    VisualSemanticJudgementList,
 )
 
 __all__ = [
@@ -37,12 +35,10 @@ __all__ = [
     "TranscriptSegment",
     "VisualDescription",
     "VisualDescriptionList",
-    "VisualJudgement",
-    "VisualJudgementList",
+    "VisualAlignment",
     "VisualSampleIndex",
-    "VisualSegment",
-    "VisualSegmentList",
-    "VisualSelection",
+    "VisualSemanticJudgement",
+    "VisualSemanticJudgementList",
     "VisualSlot",
     "WordTimestamp",
 ]

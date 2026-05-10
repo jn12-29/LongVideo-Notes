@@ -55,11 +55,13 @@ def test_make_context_inspect_resolves_existing_trim_without_creating(monkeypatc
     monkeypatch.setattr(app, "hash_file", lambda path: "trimhash")
     monkeypatch.setattr(app, "build_paths", lambda source_path, cache_dir, output_dir, input_hash: _paths(tmp_path, source_path))
 
-    ctx = app._make_context(source, None, False, False, False, False, head_minutes=10.0, create_trim=False)
+    ctx = app._make_context(source, None, False, False, False, False, head_minutes=10.0, create_trim=False, create_dirs=False)
 
     assert ctx.source_path == trimmed
     assert created == []
     assert resolved == [source.resolve()]
+    assert not (tmp_path / "cache").exists()
+    assert not (tmp_path / "output").exists()
 
 
 def test_make_context_inspect_missing_trim_reports_click_error(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
@@ -104,7 +106,10 @@ def _paths(tmp_path: Path, source_path: Path) -> SimpleNamespace:
         run_dir=run_dir,
         audio_dir=run_dir / "audio",
         visual_dir=run_dir / "visual",
-        visual_frames_dir=run_dir / "visual" / "frames",
+        visual_raw_frames_dir=run_dir / "visual" / "raw_frames",
+        visual_filter_frames_dir=run_dir / "visual" / "filter_frames",
+        visual_filter_variants_dir=run_dir / "visual" / "filter_variants",
+        visual_semantic_frames_dir=run_dir / "visual" / "semantic_frames",
         debug_dir=run_dir / "debug",
         refined_dir=run_dir / "refined",
         sections_dir=run_dir / "sections",

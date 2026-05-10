@@ -10,23 +10,19 @@ from lvnotes.core.cache import (
     write_cache_manifest,
 )
 from lvnotes.core.pipeline import MetadataValue, StageOutput
-from lvnotes.core.schemas import VisualJudgementList, VisualSampleIndex, VisualSegmentList, VisualSelection
+from lvnotes.core.schemas import VisualAlignment, VisualSampleIndex, VisualSemanticJudgementList
 
 
 def read_samples(path: Path) -> VisualSampleIndex:
     return read_json_file(path, VisualSampleIndex)  # type: ignore[return-value]
 
 
-def read_segments(path: Path) -> VisualSegmentList:
-    return read_json_file(path, VisualSegmentList)  # type: ignore[return-value]
+def read_semantic_judgements(path: Path) -> VisualSemanticJudgementList:
+    return read_json_file(path, VisualSemanticJudgementList)  # type: ignore[return-value]
 
 
-def read_judgements(path: Path) -> VisualJudgementList:
-    return read_json_file(path, VisualJudgementList)  # type: ignore[return-value]
-
-
-def read_selections(path: Path) -> list[VisualSelection]:
-    return read_json_file(path, list[VisualSelection])  # type: ignore[return-value]
+def read_alignments(path: Path) -> list[VisualAlignment]:
+    return read_json_file(path, list[VisualAlignment])  # type: ignore[return-value]
 
 
 def cache_output(

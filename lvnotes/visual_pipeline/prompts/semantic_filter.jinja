@@ -1,0 +1,24 @@
+Return JSON matching this shape:
+{"judgements":[{"frame_id":0,"medium":"ppt","is_meaningful":true,"reason":"brief reason"}]}
+Write reason in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide terms when preserving the original wording is clearer.
+
+Judge each frame independently. Use the exact frame_id labels attached before each image.
+
+Set is_meaningful=true only when the image contains useful visual information for technical notes, such as:
+- substantive PPT/slide content
+- chapter or section title slides
+- formulas, charts, tables, diagrams, workflows, code, demos, blackboard or whiteboard content
+- visual examples that clarify the talk content
+
+Set is_meaningful=false for:
+- pure speaker camera frames
+- black screen or mostly empty screen
+- meeting UI, player UI, transition screens, watermarks, or layout-only frames
+- images without semantic content useful for notes
+
+Allowed medium values: ppt, blackboard, code, demo, chart, table, speaker, blank, ui, other.
+Use speaker for pure speaker frames, blank for black/empty frames, and ui for meeting/player UI frames.
+Return exactly one judgement for every frame in the input list.
+
+Frames:
+{{ frames }}

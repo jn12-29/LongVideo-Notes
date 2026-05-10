@@ -1,0 +1,27 @@
+variants:
+  - name: strict
+    phash_threshold: 6
+    histogram_threshold: 0.08
+    duplicate_phash_threshold: 1
+    duplicate_histogram_threshold: 0.02
+    duplicate_pixel_threshold: 0.015
+    max_static_seconds: null
+    crop: null
+
+  - name: default
+    phash_threshold: 8
+    histogram_threshold: 0.12
+    duplicate_phash_threshold: 2
+    duplicate_histogram_threshold: 0.03
+    duplicate_pixel_threshold: 0.02
+    max_static_seconds: null
+    crop: null
+
+  - name: loose
+    phash_threshold: 10
+    histogram_threshold: 0.16
+    duplicate_phash_threshold: 3
+    duplicate_histogram_threshold: 0.05
+    duplicate_pixel_threshold: 0.03
+    max_static_seconds: null
+    crop: null

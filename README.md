@@ -31,7 +31,8 @@ lvnotes assemble <input-file> --no-cache
 `lvnotes --help` 会展示推荐命令、模式规则、常用选项和 stage 调试入口。
 各命令的 `--help` 会列出该命令会生成或读取的主要文件。
 传 `--head-minutes <minutes>` 时，CLI 会先在输入文件同目录生成或复用 `<stem>.head-<minutes>m<suffix>`，然后只处理该裁剪文件。
-运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。
+写入型命令会对同一输入的 cache 目录获取独占锁；`inspect` 保持只读，不加锁也不创建目录。
+运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。`visual describe` 和 `merge section` 会按配置并发调用 LLM/VLM。
 最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
 
 CLI 默认查找当前目录下的 `config.yaml`，也可通过 `--config <path>` 指定配置文件。可从 `config.example.yaml` 复制并按本地 LLM / ASR 环境调整。
@@ -54,7 +55,7 @@ LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 pro
 - `docs/media.md` —— media 模块权威：ffmpeg / ffprobe 唯一入口
 - `docs/asr.md` —— ASR 模块权威：ASR 抽象与 faster-whisper 本地实现
 - `docs/audio-pipeline.md` —— 音频管线权威：extract / transcribe / segment / refine
-- `docs/visual-pipeline.md` —— 多模管线权威：sample / cluster / judge / select / describe
+- `docs/visual-pipeline.md` —— 多模管线权威：sample / filter / semantic_filter / align / describe
 - `docs/merge.md` —— 合并阶段权威：unify / outline / section / assemble 与最终 Markdown 生成
 
 ## 当前状态

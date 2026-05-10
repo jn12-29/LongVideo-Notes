@@ -30,6 +30,7 @@
 | `slugs.py` | Markdown anchor / slug 生成唯一入口 |
 | `pipeline.py` | stage 统一契约与 `StageOutput` |
 | `cache.py` | 内容 hash、原子写入、prompt 模板 hash |
+| `locks.py` | 输入 cache 与裁剪文件的 POSIX 文件锁 |
 | `config.py` | 配置 schema、加载、校验、封闭任务名集合 |
 | `context.py` | `PipelineContext` 运行上下文 |
 | `exceptions.py` | 项目异常层次 |
@@ -72,6 +73,7 @@
 | 转录文本按时间切片 | `core/transcript.py` |
 | 原子文件写入 | `core/cache.py` 的 `atomic_write_*` |
 | prompt 模板 hash | `core/cache.py` 的 `hash_prompt_template` |
+| 文件锁 | `core/locks.py` |
 | 配置加载与校验 | `core/config.py` |
 | 项目异常类型 | `core/exceptions.py` |
 
@@ -150,11 +152,9 @@ core/schemas/
 
 - `SampledFrame`
 - `VisualSampleIndex`
-- `VisualSegment`
-- `VisualSegmentList`
-- `VisualJudgement`
-- `VisualJudgementList`
-- `VisualSelection`
+- `VisualSemanticJudgement`
+- `VisualSemanticJudgementList`
+- `VisualAlignment`
 - `VisualDescription`
 - `VisualDescriptionList`
 
@@ -207,9 +207,10 @@ class AudioArtifacts:
 class VisualArtifacts:
     def __init__(self, input_hash: str, paths: PipelinePaths) -> None: ...
     def get_samples(self) -> VisualSampleIndex: ...
-    def get_segments(self) -> VisualSegmentList: ...
-    def get_judgements(self) -> VisualJudgementList: ...
-    def get_selections(self) -> list[VisualSelection]: ...
+    def get_filtered_samples(self) -> VisualSampleIndex: ...
+    def get_semantic_samples(self) -> VisualSampleIndex: ...
+    def get_semantic_judgements(self) -> VisualSemanticJudgementList: ...
+    def get_alignments(self) -> list[VisualAlignment]: ...
     def get_descriptions(self) -> VisualDescriptionList: ...
     def is_complete(self) -> bool: ...
 ```
@@ -236,16 +237,20 @@ class PipelinePaths:
     run_dir: Path
     audio_dir: Path
     visual_dir: Path
-    visual_frames_dir: Path
+    visual_raw_frames_dir: Path
+    visual_filter_frames_dir: Path
+    visual_filter_variants_dir: Path
+    visual_semantic_frames_dir: Path
     debug_dir: Path
     refined_dir: Path
     sections_dir: Path
     audio_wav: Path
     audio_extract_json: Path
     visual_sample_json: Path
-    visual_segments_json: Path
-    visual_judgements_json: Path
-    visual_selections_json: Path
+    visual_filtered_sample_json: Path
+    visual_semantic_sample_json: Path
+    visual_semantic_judgements_json: Path
+    visual_alignments_json: Path
     visual_descriptions_json: Path
     transcript_raw_json: Path
     segments_json: Path
@@ -260,6 +265,9 @@ class PipelinePaths:
 
 ```python
 def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str) -> PipelinePaths: ...
+def resolve_visual_raw_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
+def resolve_visual_filter_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
+def resolve_visual_semantic_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
 def resolve_visual_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
 def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
 ```
@@ -275,10 +283,15 @@ def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> P
 - `debug_dir == cache/{input_hash}/debug`,存放失败诊断历史文件,不参与 stage cache manifest。
 - `cache_note_md == cache/{input_hash}/note.md`,是 assemble 生成的调试副本或缓存副本,不是最终用户产物。
 - `output_note_md == output_dir / "<source-stem>.md"`,是 latest 最终用户产物；assemble 同时写出 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
-- visual 帧文件存放在 `visual_frames_dir == cache/{input_hash}/visual/frames/`。
-- visual schema 中的 `image_source_path` 保存为相对 `visual_frames_dir` 的路径,例如 `000123.000.png` 或子目录下的 `segment-001/000123.000.png`。
-- `resolve_visual_image_path()` 把 schema 内的相对 `image_source_path` 解析为绝对帧文件路径,返回 `paths.visual_frames_dir / image_source_path` 归一化后的路径。
-- `make_markdown_image_path()` 把 schema 内的相对 `image_source_path` 转换为相对于 `paths.output_note_md.parent` 的 Markdown 图片路径;业务 stage 不手写相对路径。
+- raw 采样帧存放在 `visual_raw_frames_dir == cache/{input_hash}/visual/raw_frames/`。
+- 过滤后帧存放在 `visual_filter_frames_dir == cache/{input_hash}/visual/filter_frames/`。
+- filter 参数对比产物存放在 `visual_filter_variants_dir == cache/{input_hash}/visual/filter_variants/`。
+- weak VLM 语义过滤后的帧存放在 `visual_semantic_frames_dir == cache/{input_hash}/visual/semantic_frames/`。
+- `sample.json` 中的 `image_source_path` 相对 `visual_raw_frames_dir`。
+- `filtered_sample.json` 中的 `image_source_path` 相对 `visual_filter_frames_dir`。
+- `semantic_sample.json`、`alignments.json`、`descriptions.json` 中的 `image_source_path` 相对 `visual_semantic_frames_dir`。
+- `resolve_visual_raw_image_path()`、`resolve_visual_filter_image_path()` 和 `resolve_visual_semantic_image_path()` 分别解析三类图片路径,并拒绝绝对路径或 `..` 逃逸。
+- `resolve_visual_image_path()` 与 `make_markdown_image_path()` 面向下游可见图片,默认解析到 `visual_semantic_frames_dir`。
 
 ### 3.4 `timestamps.py`
 
@@ -379,7 +392,8 @@ Manifest 路径规则:
 
 - 单一主产物 stage 使用 `<output_path>.cache.json`,例如 `segments.json.cache.json`、`outline.json.cache.json`。
 - `extract` stage 使用 `audio/extract.json.cache.json`,manifest.output_paths 包含 `audio.wav` 和 `audio/extract.json`。
-- `visual_sample` stage 使用 `visual/sample.json.cache.json`,manifest.output_paths 包含 `visual/sample.json` 和采样帧文件列表。
+- `visual_sample` stage 使用 `visual/sample.json.cache.json`,manifest.output_paths 包含 `visual/sample.json` 和 raw 采样帧文件列表。
+- `visual_filter` stage 使用 `visual/filtered_sample.json.cache.json`,manifest.output_paths 包含 `visual/filtered_sample.json` 和过滤后帧文件列表。
 - `refine` stage 的最终 manifest 使用 `refined_transcript.json.cache.json`;段级 `refined/{seg_id:04d}.json` 是断点续跑产物,不单独表达 stage cache 命中。
 - `section` stage 使用 per-chapter manifest:`sections/{chapter_id:03d}.md.cache.json`。
 - `assemble` stage 使用 `cache/{input_hash}/note.md.cache.json`;`output_dir/<source-stem>.md` 和带时间戳归档文件是最终用户产物,不作为 manifest 位置。
@@ -530,14 +544,49 @@ class VisualSampleConfig:
     fps: float = 1
 
 @dataclass(frozen=True)
-class VisualClusterConfig:
-    phash_low_threshold: int
-    phash_high_threshold: int
+class VisualCropConfig:
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+@dataclass(frozen=True)
+class VisualFilterConfig:
+    name: str = "default"
+    active_variant: str = "default"
+    variants_file: Path | None = None
+    phash_threshold: int = 8
+    histogram_threshold: float = 0.12
+    duplicate_phash_threshold: int = 2
+    duplicate_histogram_threshold: float = 0.03
+    duplicate_pixel_threshold: float = 0.02
+    max_static_seconds: float | None = None
+    crop: VisualCropConfig | None = None
+
+@dataclass(frozen=True)
+class VisualFilterVariantConfig:
+    name: str
+    phash_threshold: int = 8
+    histogram_threshold: float = 0.12
+    duplicate_phash_threshold: int = 2
+    duplicate_histogram_threshold: float = 0.03
+    duplicate_pixel_threshold: float = 0.02
+    max_static_seconds: float | None = None
+    crop: VisualCropConfig | None = None
+
+@dataclass(frozen=True)
+class VisualFilterVariantFileConfig:
+    variants: list[VisualFilterVariantConfig]
+
+@dataclass(frozen=True)
+class VisualDescribeConfig:
+    concurrent_calls: int = 5
 
 @dataclass(frozen=True)
 class VisualPipelineConfig:
     sample: VisualSampleConfig
-    cluster: VisualClusterConfig
+    filter: VisualFilterConfig
+    describe: VisualDescribeConfig
 
 @dataclass(frozen=True)
 class MergeOutlineConfig:
@@ -570,9 +619,10 @@ class AppConfig:
     audio_pipeline: AudioPipelineConfig
     visual_pipeline: VisualPipelineConfig
     merge: MergeConfig
+    filter_variants: VisualFilterVariantFileConfig | None = None
 ```
 
-实现可用 pydantic model 而不是 dataclass,但公开字段名和嵌套路径必须保持一致,例如 `ctx.config.project.cache_dir`、`ctx.config.audio_pipeline.extract.sample_rate`、`ctx.config.merge.section.concurrent_calls`。
+实现可用 pydantic model 而不是 dataclass,但公开字段名和嵌套路径必须保持一致,例如 `ctx.config.project.cache_dir`、`ctx.config.audio_pipeline.extract.sample_rate`、`ctx.config.visual_pipeline.describe.concurrent_calls`、`ctx.config.merge.section.concurrent_calls`。
 
 `LLMProfile` 与 `ASRConfig` 归属 `core/config.py`。`llm/` 和 `asr/` 只能 import 这些配置类型,不得在各自模块内重新定义配置 schema 副本。
 
@@ -771,7 +821,10 @@ refined = read_json(ctx.paths.refined_transcript_json)
 | `output_dir` | 最终用户产物目录 |
 | `cache_note_md` | `cache/{input_hash}/note.md`,调试或缓存副本 |
 | `output_note_md` | `output_dir/<source-stem>.md`,latest 最终用户产物 |
-| `visual_frames_dir` | `cache/{input_hash}/visual/frames/` |
+| `visual_raw_frames_dir` | `cache/{input_hash}/visual/raw_frames/` |
+| `visual_filter_frames_dir` | `cache/{input_hash}/visual/filter_frames/` |
+| `visual_filter_variants_dir` | `cache/{input_hash}/visual/filter_variants/` |
+| `visual_semantic_frames_dir` | `cache/{input_hash}/visual/semantic_frames/` |
 | `debug_dir` | `cache/{input_hash}/debug`,失败诊断历史目录 |
 
 目录布局:
@@ -781,14 +834,19 @@ cache/{input_hash}/
 ├── audio/
 │   ├── audio.wav
 │   └── extract.json
+├── .lvnotes.lock
 ├── debug/
 │   └── outline-failure-YYYYMMDD-HHMMSS-ffffffZ.json
 ├── visual/
-│   ├── frames/
+│   ├── raw_frames/
+│   ├── filter_frames/
+│   ├── filter_variants/
+│   ├── semantic_frames/
 │   ├── sample.json
-│   ├── segments.json
-│   ├── judgements.json
-│   ├── selections.json
+│   ├── filtered_sample.json
+│   ├── semantic_sample.json
+│   ├── semantic_judgements.json
+│   ├── alignments.json
 │   └── descriptions.json
 ├── transcript_raw.json
 ├── segments.json
@@ -811,10 +869,13 @@ output_dir/
 - `output_dir/<source-stem>.md` 是 latest 最终用户产物。
 - `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 是每次 assemble 写出的归档用户产物。
 - `cache/{input_hash}/note.md` 只作为中间产物或 debug copy 存在。
+- `cache/{input_hash}/.lvnotes.lock` 是写入型 CLI 命令的独占锁文件,不进入 cache key、manifest 或业务产物列表。
 - `cache/{input_hash}/debug/` 存放失败诊断历史文件,不参与 cache hit 判定。
 - `source_path` 统一表示解析后的绝对本地输入路径,不区分视频和音频。配置、schema 和上下文中不要使用带媒体类型假设的字段名。
-- `image_source_path` 在 visual 与 merge schema 中保存为相对 `cache/{input_hash}/visual/frames/` 的路径。
-- `resolve_visual_image_path()` 负责把相对 `image_source_path` 解析到真实帧文件。
+- `sample.json` 的 `image_source_path` 保存为相对 `cache/{input_hash}/visual/raw_frames/` 的路径。
+- `filtered_sample.json` 的 `image_source_path` 保存为相对 `cache/{input_hash}/visual/filter_frames/` 的路径。
+- `semantic_sample.json`、`alignments.json`、`descriptions.json` 的 `image_source_path` 保存为相对 `cache/{input_hash}/visual/semantic_frames/` 的路径。
+- `resolve_visual_raw_image_path()`、`resolve_visual_filter_image_path()` 和 `resolve_visual_semantic_image_path()` 负责把相对 `image_source_path` 解析到真实帧文件,并拒绝逃逸对应帧目录。
 - `make_markdown_image_path()` 负责把相对 `image_source_path` 转换为最终 Markdown 可用的相对路径。
 
 ---
@@ -867,6 +928,7 @@ lvnotes/core/
 ├── slugs.py
 ├── pipeline.py
 ├── cache.py
+├── locks.py
 ├── config.py
 ├── context.py
 ├── exceptions.py
@@ -875,6 +937,8 @@ lvnotes/core/
 ```
 
 `constants.py` 只放真正跨模块常量。业务阈值和默认模型不放 constants,应进入配置。
+
+`locks.py` 使用标准库 `fcntl.flock` 提供 POSIX advisory locks。写入型命令持有 `cache/{input_hash}/.lvnotes.lock`;`--head-minutes` 创建裁剪文件时持有裁剪输出旁的隐藏锁文件。锁文件只保护遵守本协议的进程。
 
 ---
 

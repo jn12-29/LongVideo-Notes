@@ -102,10 +102,18 @@ audio_pipeline:
 visual_pipeline:
   sample:
     fps: 1
-  cluster:
-    phash_low_threshold: 5
-    phash_high_threshold: 15
-
+  filter:
+    active_variant: default
+    variants_file: filter_variants.example.yaml
+    phash_threshold: 8
+    histogram_threshold: 0.12
+    duplicate_phash_threshold: 2
+    duplicate_histogram_threshold: 0.03
+    duplicate_pixel_threshold: 0.02
+    max_static_seconds: null
+    crop: null
+  describe:
+    concurrent_calls: 5
 merge:
   outline:
     target_chapter_count_hint: "5-12"

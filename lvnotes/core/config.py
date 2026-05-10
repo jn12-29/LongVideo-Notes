@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import string
 
 import yaml
@@ -8,6 +9,7 @@ from lvnotes.core.constants import SUPPORTED_LLM_CAPABILITIES, SUPPORTED_LLM_PRO
 from lvnotes.core.exceptions import ConfigError
 
 LLM_TASK_NAMES = frozenset({"segment", "refine", "outline", "section", "slide_judge", "slide_describe"})
+_VARIANT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 class FrozenModel(BaseModel):
@@ -154,14 +156,99 @@ class VisualSampleConfig(FrozenModel):
     fps: float = 1
 
 
-class VisualClusterConfig(FrozenModel):
-    phash_low_threshold: int = 5
-    phash_high_threshold: int = 15
+class VisualCropConfig(FrozenModel):
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+    @model_validator(mode="after")
+    def validate_region(self) -> "VisualCropConfig":
+        if not (0 <= self.left < self.right <= 1 and 0 <= self.top < self.bottom <= 1):
+            raise ValueError("crop must satisfy 0 <= left < right <= 1 and 0 <= top < bottom <= 1")
+        return self
+
+
+class VisualFilterVariantConfig(FrozenModel):
+    name: str
+    phash_threshold: int = 8
+    histogram_threshold: float = 0.12
+    duplicate_phash_threshold: int = 2
+    duplicate_histogram_threshold: float = 0.03
+    duplicate_pixel_threshold: float = 0.02
+    max_static_seconds: float | None = None
+    crop: VisualCropConfig | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if not _VARIANT_NAME_RE.fullmatch(value):
+            raise ValueError("filter variant name must contain only letters, digits, underscores, or hyphens")
+        return value
+
+    @field_validator("phash_threshold", "duplicate_phash_threshold")
+    @classmethod
+    def validate_phash_threshold(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("phash thresholds must be non-negative")
+        return value
+
+    @field_validator("histogram_threshold", "duplicate_histogram_threshold", "duplicate_pixel_threshold")
+    @classmethod
+    def validate_histogram_threshold(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("visual filter thresholds must be non-negative")
+        return value
+
+    @field_validator("max_static_seconds")
+    @classmethod
+    def validate_max_static_seconds(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("max_static_seconds must be positive")
+        return value
+
+
+class VisualFilterVariantFileConfig(FrozenModel):
+    variants: list[VisualFilterVariantConfig]
+
+    @model_validator(mode="after")
+    def validate_variants(self) -> "VisualFilterVariantFileConfig":
+        names = [variant.name for variant in self.variants]
+        if len(names) != len(set(names)):
+            raise ValueError("filter variant names must be unique")
+        if not names:
+            raise ValueError("filter variants file must define at least one variant")
+        return self
+
+
+class VisualFilterConfig(VisualFilterVariantConfig):
+    name: str = "default"
+    active_variant: str = "default"
+    variants_file: Path | None = None
+
+    @field_validator("active_variant")
+    @classmethod
+    def validate_active_variant(cls, value: str) -> str:
+        if not _VARIANT_NAME_RE.fullmatch(value):
+            raise ValueError("active_variant must contain only letters, digits, underscores, or hyphens")
+        return value
+
+
+class VisualDescribeConfig(FrozenModel):
+    concurrent_calls: int = 5
+
+    @field_validator("concurrent_calls")
+    @classmethod
+    def validate_concurrent_calls(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("concurrent_calls must be positive")
+        return value
 
 
 class VisualPipelineConfig(FrozenModel):
     sample: VisualSampleConfig = Field(default_factory=VisualSampleConfig)
-    cluster: VisualClusterConfig = Field(default_factory=VisualClusterConfig)
+    filter: VisualFilterConfig = Field(default_factory=VisualFilterConfig)
+    describe: VisualDescribeConfig = Field(default_factory=VisualDescribeConfig)
 
 
 class MergeOutlineConfig(FrozenModel):
@@ -170,6 +257,13 @@ class MergeOutlineConfig(FrozenModel):
 
 class MergeSectionConfig(FrozenModel):
     concurrent_calls: int = 5
+
+    @field_validator("concurrent_calls")
+    @classmethod
+    def validate_concurrent_calls(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("concurrent_calls must be positive")
+        return value
 
 
 class MergeAssembleConfig(FrozenModel):
@@ -204,6 +298,7 @@ class AppConfig(FrozenModel):
     audio_pipeline: AudioPipelineConfig = Field(default_factory=AudioPipelineConfig)
     visual_pipeline: VisualPipelineConfig = Field(default_factory=VisualPipelineConfig)
     merge: MergeConfig = Field(default_factory=MergeConfig)
+    filter_variants: VisualFilterVariantFileConfig | None = None
 
     @model_validator(mode="after")
     def validate_tasks(self) -> "AppConfig":
@@ -216,6 +311,10 @@ class AppConfig(FrozenModel):
         missing_profiles = {profile for profile in self.tasks.values() if profile not in self.llm.profiles}
         if missing_profiles:
             raise ValueError(f"tasks reference unknown profiles: {sorted(missing_profiles)}")
+        if self.filter_variants is not None:
+            variant_names = {variant.name for variant in self.filter_variants.variants}
+            if self.visual_pipeline.filter.active_variant not in variant_names:
+                raise ValueError(f"active_variant not found in filter variants: {self.visual_pipeline.filter.active_variant}")
         return self
 
 
@@ -225,11 +324,33 @@ def load_config(path: Path | None = None) -> AppConfig:
         raise ConfigError(f"config file not found: {config_path}")
     try:
         payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        _load_filter_variants(payload, config_path.parent)
         return AppConfig.model_validate(payload)
     except ConfigError:
         raise
     except Exception as exc:
         raise ConfigError(f"failed to load config {config_path}: {exc}") from exc
+
+
+def _load_filter_variants(payload: object, config_dir: Path) -> None:
+    if not isinstance(payload, dict):
+        return
+    visual_pipeline = payload.get("visual_pipeline")
+    if not isinstance(visual_pipeline, dict):
+        return
+    filter_config = visual_pipeline.get("filter")
+    if not isinstance(filter_config, dict):
+        return
+    variants_file = filter_config.get("variants_file")
+    if variants_file in (None, ""):
+        return
+    variants_path = Path(variants_file)
+    if not variants_path.is_absolute():
+        variants_path = config_dir / variants_path
+    if not variants_path.exists():
+        raise ConfigError(f"filter variants file not found: {variants_path}")
+    payload["filter_variants"] = yaml.safe_load(variants_path.read_text(encoding="utf-8")) or {}
+    filter_config["variants_file"] = variants_path
 
 
 def _validate_format_fields(template: str, allowed: set[str]) -> None:

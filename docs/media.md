@@ -1,6 +1,6 @@
 # Media Module
 
-`media/` 模块设计文档。本模块是全项目 ffmpeg / ffprobe 的唯一入口,负责媒体元信息读取、抽取 wav、抽取采样帧。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`。
+`media/` 模块设计文档。本模块是全项目 ffmpeg / ffprobe 的唯一入口,负责媒体元信息读取、抽取 wav、抽取采样帧和创建开头裁剪文件。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`。
 
 文档结构:Overview、Design Considerations、Public API、Module Layout、Error Handling、Dependencies、Implementation Order。
 
@@ -8,13 +8,14 @@
 
 ## 1. Overview
 
-`media/` 只做三类事:
+`media/` 只做四类事:
 
 | 模块 | 职责 | 主要消费者 |
 |---|---|---|
 | `probe.py` | 调 `ffprobe` 读取音视频元信息 | `audio_pipeline/extract.py`、`visual_pipeline/sample.py`、`cli/app.py` |
 | `audio.py` | 调 `ffmpeg` 抽取 / 转码音频 wav | `audio_pipeline/extract.py` |
 | `video.py` | 调 `ffmpeg` 抽取视频帧 | `visual_pipeline/sample.py` |
+| `trim.py` | 调 `ffmpeg` 创建输入开头裁剪文件 | `cli/app.py` |
 
 全项目只有 `media/` 允许直接使用 `subprocess` 调用 `ffmpeg` / `ffprobe`。其他模块需要媒体处理时,必须调用 `media/` 暴露的函数。
 
@@ -42,6 +43,7 @@ ffmpeg / ffprobe 是外部进程,错误形态复杂。集中在 `media/` 可以�
 - 读媒体元信息
 - 抽取 wav
 - 按 fps 抽帧
+- 创建或解析 `--head-minutes` 开头裁剪文件
 
 禁止新增形态:
 
@@ -186,11 +188,30 @@ def extract_frames(
 - 使用 `ffmpeg`
 - 输出目录由调用方保证存在
 - `filename_pattern` 必须是单层文件名模式,例如 `frame_%06d.jpg`
-- 抽帧前不删除目录内已有文件;缓存清理由 stage / cache 层负责
+- 抽帧前清理当前 `filename_pattern` 匹配的旧帧,不删除其他文件
 - 返回列表按时间戳排序
 - `timestamp` 由固定 fps 与 0-based 帧序号推导:`timestamp = frame_index / fps`,再经 `core.timestamps.normalize_seconds()` 归一到毫秒。第一版不处理 VFR 精确 PTS;如后续需要精确 PTS,再扩展 media API
 - 输入没有 video stream 时抛 `MediaError`
 - 第一版只支持固定 fps,不做 scene detect / 关键帧抽取 / 裁剪 / 缩放
+
+### 3.4 `trim.py`
+
+职责:封装 `--head-minutes` 输入裁剪文件创建与解析。
+
+```python
+def trim_media_head(input_path: Path, head_minutes: float, reuse: bool = True) -> Path: ...
+def resolve_head_trim_path(input_path: Path, head_minutes: float) -> Path: ...
+def make_head_trim_path(input_path: Path, head_minutes: float) -> Path: ...
+```
+
+语义:裁剪文件与输入文件放在同一目录,命名为 `<source-stem>.head-<minutes>m<source-suffix>`。写入型命令使用 `trim_media_head()` 创建或复用裁剪文件;`inspect` 使用 `resolve_head_trim_path()` 只解析已存在裁剪文件。
+
+实现要点:
+
+- 创建裁剪文件时使用 `core.locks.trim_output_lock()` 保护目标输出
+- 使用临时文件生成,校验通过后原子替换目标裁剪文件
+- `resolve_head_trim_path()` 不创建裁剪文件或锁文件
+- 裁剪后校验输出文件存在、非空且包含 audio stream
 
 ---
 
@@ -201,6 +222,8 @@ def extract_frames(
 | `probe_media` | 调 ffprobe,解析元信息 | 不写缓存、不推断处理模式 |
 | `extract_wav` | 抽取 / 转码 wav | 不决定默认配置、不写 `extract.json` |
 | `extract_frames` | 固定 fps 抽帧,返回帧路径与时间戳 | 不做视觉聚类、不生成 `VisualSampleIndex` |
+| `trim_media_head` | 创建或复用开头裁剪文件 | 不计算 input hash、不创建 pipeline cache |
+| `resolve_head_trim_path` | 解析并校验已存在裁剪文件 | 不创建裁剪文件、不创建锁文件 |
 
 允许内部 helper:
 
@@ -255,6 +278,7 @@ lvnotes/media/
 ├── __init__.py
 ├── probe.py
 ├── audio.py
+├── trim.py
 └── video.py
 ```
 
@@ -263,6 +287,7 @@ Import 规则:
 | 来源 | 允许? |
 |---|---|
 | `core/exceptions.py` | ✅ |
+| `core/locks.py` | ✅,用于 `--head-minutes` 裁剪输出锁 |
 | `core/timestamps.py` | ✅,如需毫秒归一化 |
 | `subprocess` | ✅,仅本模块 |
 | `json` | ✅ |
@@ -278,6 +303,7 @@ Import 规则:
 项目内:
 
 - `core/exceptions.py`: `MediaError`
+- `core/locks.py`: 裁剪输出文件锁
 - `core/timestamps.py`: 如需时间戳归一化
 
 系统依赖:

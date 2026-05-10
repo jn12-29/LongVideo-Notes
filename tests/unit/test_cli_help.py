@@ -38,15 +38,19 @@ def test_top_level_help_lists_commands_with_short_help_in_workflow_order() -> No
     result = CliRunner().invoke(app.main, ["--help"])
 
     assert result.exit_code == 0
-    assert "run         Generate a Markdown note end to end." in result.output
-    assert "inspect     Inspect existing artifacts without running stages." in result.output
-    assert "extract     Run audio extract stage." in result.output
-    assert "describe    Run visual describe stage; requires --mm." in result.output
-    assert "assemble    Run merge assemble stage." in result.output
+    assert "run              Generate a Markdown note end to end." in result.output
+    assert "inspect          Inspect existing artifacts without running stages." in result.output
+    assert "extract          Run audio extract stage." in result.output
+    assert "describe         Run visual describe stage; requires --mm." in result.output
+    assert "assemble         Run merge assemble stage." in result.output
     assert result.output.index("  run") < result.output.index("  inspect")
     assert result.output.index("  inspect") < result.output.index("  extract")
     assert result.output.index("  extract") < result.output.index("  sample")
-    assert result.output.index("  sample") < result.output.index("  unify")
+    assert result.output.index("  sample") < result.output.index("  filter")
+    assert result.output.index("  filter") < result.output.index("  semantic-filter")
+    assert result.output.index("  semantic-filter") < result.output.index("  align")
+    assert result.output.index("  align") < result.output.index("  describe")
+    assert result.output.index("  describe") < result.output.index("  unify")
 
 
 def test_run_help_mentions_common_run_options() -> None:
@@ -68,7 +72,10 @@ def test_run_help_lists_end_to_end_outputs() -> None:
     assert "YYYYMMDD-HHMMSS.md" in result.output
     assert "cache/{input_hash}/note.md" in result.output
     assert "Multimodal extras with --mm:" in result.output
-    assert "cache/{input_hash}/visual/frames/" in result.output
+    assert "cache/{input_hash}/visual/raw_frames/" in result.output
+    assert "cache/{input_hash}/visual/filter_frames/" in result.output
+    assert "visual/filtered_sample.json" in result.output
+    assert "visual/filter_variants/" in result.output
     assert "visual/descriptions.json" in result.output
 
 
@@ -91,7 +98,7 @@ def test_inspect_help_lists_readable_artifacts_without_generation() -> None:
     assert result.exit_code == 0
     assert "Inspect does not generate files" in result.output
     assert "audio: extract, transcript, segments, refined" in result.output
-    assert "visual: sample, cluster, judge, select, describe" in result.output
+    assert "visual: sample, filter, filter-variants, semantic-filter, semantic-judgements, align, describe" in result.output
     assert "merge: blocks, unify, outline, note, assemble" in result.output
 
 
@@ -111,10 +118,10 @@ def test_stage_help_mentions_head_minutes_and_no_cache() -> None:
         ("transcribe", ("cache/{input_hash}/transcript_raw.json",)),
         ("segment", ("cache/{input_hash}/segments.json",)),
         ("refine", ("cache/{input_hash}/refined_transcript.json", "cache/{input_hash}/refined/{seg_id:04d}.json")),
-        ("sample", ("cache/{input_hash}/visual/frames/", "cache/{input_hash}/visual/sample.json")),
-        ("cluster", ("cache/{input_hash}/visual/segments.json",)),
-        ("judge", ("cache/{input_hash}/visual/judgements.json",)),
-        ("select", ("cache/{input_hash}/visual/selections.json",)),
+        ("sample", ("cache/{input_hash}/visual/raw_frames/", "cache/{input_hash}/visual/sample.json")),
+        ("filter", ("cache/{input_hash}/visual/filter_frames/", "cache/{input_hash}/visual/filtered_sample.json", "cache/{input_hash}/visual/filter_variants/")),
+        ("semantic-filter", ("cache/{input_hash}/visual/semantic_frames/", "cache/{input_hash}/visual/semantic_sample.json", "cache/{input_hash}/visual/semantic_judgements.json")),
+        ("align", ("cache/{input_hash}/visual/alignments.json",)),
         ("describe", ("cache/{input_hash}/visual/descriptions.json",)),
         ("unify", ("cache/{input_hash}/content_blocks.json",)),
         ("outline", ("cache/{input_hash}/outline.json",)),

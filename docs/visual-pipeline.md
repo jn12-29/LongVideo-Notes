@@ -1,323 +1,209 @@
 # Visual Pipeline
 
-多模管线详细设计文档。本管线把视频画面转成可与音频语义段对齐的视觉描述，对外通过 `VisualArtifacts` 暴露产物。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`、`docs/audio-pipeline.md`。
+多模管线把视频画面转成可与音频语义段对齐的视觉描述，对外通过 `VisualArtifacts` 暴露产物。写代码前必读本文档以及 `docs/core.md`、`docs/cli.md`、`docs/merge.md`。
 
-文档结构：Overview、Design Considerations、Stages、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。
+## Overview
 
----
-
-## 1. Overview
-
-多模管线由 5 个 stage 顺序执行，仅在多模模式下启用。
+多模管线由 5 个主 stage 组成，仅在多模模式下启用。`sample -> filter -> semantic_filter` 可与音频管线并行；`align -> describe` 必须等待音频 refine 完成。
 
 | Stage | 名称 | 主要工具 | 主要产物 |
 |---|---|---|---|
-| 1 | sample | ffmpeg（经 `media/`） | 1fps 采样帧 |
-| 2 | cluster | pHash + 直方图 | 视觉段（连续渐变合并） |
-| 3 | judge | 弱 VLM（经 `llm/`） | 每段 medium / is_meaningful / evolution / richest_frame_id |
-| 4 | select | 拉普拉斯方差 | 每段 1 张代表帧（无意义段丢弃） |
-| 5 | describe | 强 VLM + 转录（经 `llm/` + `AudioArtifacts`） | 每个代表帧的详细图文描述 |
+| 1 | sample | ffmpeg（经 `media/`） | `raw_frames/` + `sample.json` |
+| 2 | filter | pHash + 直方图 | `filter_variants/` + `filter_frames/` + `filtered_sample.json` |
+| 3 | semantic_filter | 弱 VLM（经 `llm/`） | `semantic_frames/` + `semantic_sample.json` + `semantic_judgements.json` |
+| 4 | align | 纯逻辑 + `AudioArtifacts` | `alignments.json` |
+| 5 | describe | 强 VLM + refined text，并发 | `descriptions.json` |
 
-**对外产物**集中在 `VisualArtifacts`（`core/artifacts.py`）。合并阶段通过 `ctx.artifacts.visual` 读取，不直接 import `visual_pipeline/` 内部，也不直接读缓存文件。`ctx.artifacts` 本身是 `ArtifactBundle`。
+`sample` 保存完整原始抽帧，`filter` 默认不裁剪，使用完整帧做本地重复过滤。`semantic_filter` 用弱 VLM 筛掉无语义图，后续 `align` 和 `describe` 只使用 `semantic_frames/`。
 
-**本管线不依赖 `audio_pipeline/` 内部模块**。stage 5 需要音频管线 refine 产物时，只能通过 `ctx.artifacts.audio.get_text_at(..., strip_refs=True)` 读取指定时间区间的讲解文本。
+## Stage Contract
 
----
-
-## 2. Design Considerations
-
-### 2.1 视觉段以画面稳定区间为单位
-
-采样帧不直接进入 VLM。先用 pHash + 直方图把连续相似或渐变帧合并成视觉段，减少 VLM 调用次数，也避免对每秒画面重复描述。
-
-### 2.2 judge 与 describe 分层
-
-stage 3 使用弱 VLM 判断画面是否有意义、介质类型和最有信息量的帧；stage 5 使用强 VLM 生成详细描述。这样把便宜的过滤判断和贵的详细理解分开。
-
-### 2.3 describe 依赖音频 refine 产物
-
-画面理解需要结合该时间段讲师讲解内容。stage 5 启动前必须满足 `AudioArtifacts.is_complete() == True`，等待逻辑由 CLI 调度层处理，本管线只消费已经完成的 `AudioArtifacts`。
-
-### 2.4 VLM 输入不包含内部 marker
-
-`AudioArtifacts.get_text_at()` 默认 `strip_refs=True`，会剥离 `[[REF:N]]`。VLM 不理解项目内部 marker，describe 阶段应使用默认值，除非有明确调试需求。
-
----
-
-## 3. Stages
-
-每个 stage 用统一子结构：**职责 / Input / Output / 实现要点 / 配置项 / 缓存键 / 错误处理**。
-
-每个 stage 的实现文件（`sample.py` / `cluster.py` / `judge.py` / `select.py` / `describe.py`）暴露统一签名：
+每个 stage 的实现文件暴露统一签名：
 
 ```python
 def run(ctx: PipelineContext) -> StageOutput: ...
 ```
 
-Stage 之间不互相 import。需要读上游音频产物时通过 `ctx.artifacts.audio`；需要对外暴露视觉产物时由 `ctx.artifacts.visual` 对应的 `VisualArtifacts` 读取。
+Stage 之间不互相 import。需要读上游视觉产物时通过 `ctx.paths` 和本模块 `_common.py` 的 reader；需要读音频产物时通过 `ctx.artifacts.audio`。
 
-### 3.1 Stage 1: sample
+### Stage 1: sample
 
 **职责**：从输入视频按配置 fps 抽取采样帧。
 
-**Input**：输入视频路径（来自 `ctx.source_path`）。
+**Input**：输入视频路径（`ctx.source_path`）。
 
-**Output**：采样帧目录 + `VisualSampleIndex`。落盘到 `cache/{input_hash}/visual/frames/` 与 `cache/{input_hash}/visual/sample.json`。
+**Output**：`cache/{input_hash}/visual/raw_frames/` 与 `cache/{input_hash}/visual/sample.json`。
 
 **实现要点**：
-- 走 `media/video.py` 的抽帧函数，禁止直接 `subprocess.run`
-- 输入是音频文件或未显式传 `--mm` 时本 stage 不运行;视频输入显式传 `--mm` 时由 CLI 调度层启动多模管线
-- 帧文件命名必须稳定，包含时间戳或帧序号，便于断点续跑与人工检查
-- `SampledFrame.timestamp` 来自 `media.video.extract_frames()` 返回的 `ExtractedFrame.timestamp`,sample stage 不自行重新推导时间戳
-- sample stage 负责把 `ExtractedFrame.path` 转换为相对 `ctx.paths.visual_frames_dir` 的 `SampledFrame.image_source_path`
+
+- 走 `media/video.py` 的抽帧函数，禁止直接调用 ffmpeg。
+- 帧文件命名稳定，重新抽帧时清理当前命名模式下的旧帧。
+- `sample.json` 中 `SampledFrame.image_source_path` 相对 `visual/raw_frames/`。
 
 **配置项**（`visual_pipeline.sample.*`）：
-- `fps: float` —— 默认 1
 
-**缓存键**：调用 `build_cache_key("visual_sample", {"input": hash_file(ctx.source_path), "config": hash_json(sample 配置)})`。
+- `fps: float`，默认 `1`。
 
-**错误处理**：
-- ffmpeg 调用失败：`media/` 包装为 `MediaError` 上抛
-- 输入文件无视频流：抛 `MediaError`
+**缓存键**：`visual_sample` 使用输入文件 hash 与 sample 配置 hash。
 
-### 3.2 Stage 2: cluster
+### Stage 2: filter
 
-**职责**：把相邻采样帧聚合成视觉段。
+**职责**：本地过滤连续重复帧和全局近重复帧，减少进入弱 VLM 的候选图。
 
-**Input**：`VisualSampleIndex`。
+**Input**：`sample.json` 与 `visual/raw_frames/`。
 
-**Output**：`VisualSegmentList`，落盘 `cache/{input_hash}/visual/segments.json`。
+**Output**：`cache/{input_hash}/visual/filter_variants/`、`cache/{input_hash}/visual/filter_frames/` 与 `cache/{input_hash}/visual/filtered_sample.json`。
 
 **实现要点**：
-- 使用 pHash 距离做主判断，直方图差异做辅助判断
-- 使用双阈值 + 跟段首累积比对，避免缓慢渐变被切成大量碎段
-- 输出只描述时间边界与候选帧，不调用 VLM
 
-**配置项**（`visual_pipeline.cluster.*`）：
-- `phash_low_threshold: int`
-- `phash_high_threshold: int`
+- 默认 `crop: null`，对完整帧计算 pHash 与灰度直方图差异。
+- 如果配置了 `crop`，只在计算相似度时裁剪，保存到 `filter_frames/` 的仍是完整原图。
+- 每个 filter variant 先生成 adjacent-only 结果，再用更严格的 pHash、灰度直方图、低分辨率像素差阈值过滤非相邻近重复帧。
+- 仅在显式设置 `max_static_seconds` 为正数时，长时间静态内容按该间隔保底保留一张；保底帧仍会经过全局近重复过滤。
+- 每个 variant 写入 `visual/filter_variants/{slug}/adjacent_frames/`、`adjacent_sample.json`、`frames/` 与 `filtered_sample.json`。
+- `active_variant` 的全局去重结果同步到 `visual/filter_frames/` 与 `visual/filtered_sample.json`，后续 semantic filter 只消费稳定产物。
+- `filtered_sample.json` 复用 `VisualSampleIndex`，保留原始 `SampledFrame.id` 和 timestamp，稳定产物中的 `image_source_path` 相对 `visual/filter_frames/`。
 
-**缓存键**：调用 `build_cache_key("visual_cluster", {"samples": hash_json(VisualSampleIndex), "config": hash_json(cluster 配置)})`。
+**配置项**（`visual_pipeline.filter.*`）：
 
-**错误处理**：不变量违反（时间倒序、空视觉段）→ `AssertionError`。
+- `phash_threshold: int`，默认 `8`。
+- `histogram_threshold: float`，默认 `0.12`。
+- `duplicate_phash_threshold: int`，默认 `2`。
+- `duplicate_histogram_threshold: float`，默认 `0.03`。
+- `duplicate_pixel_threshold: float`，默认 `0.02`。
+- `max_static_seconds: float | null`，默认 `null`，表示不启用长静态保底。
+- `crop: null | {left, top, right, bottom}`，默认 `null`。
+- `active_variant: str`，默认 `default`。
+- `variants_file: path | null`，相对主配置文件目录解析；未配置时使用顶层 filter 参数生成 `default` variant。
 
-### 3.3 Stage 3: judge
+`filter_variants.yaml` 格式：
 
-**职责**：用弱 VLM 判断每个视觉段是否值得保留，并选择信息量最高的候选帧。
-
-**Input**：`VisualSegmentList` + 每段首 / 中 / 末帧。
-
-**Output**：`VisualJudgementList`，落盘 `cache/{input_hash}/visual/judgements.json`。
-
-**实现要点**：
-- 每段最多传首 / 中 / 末三帧给弱 VLM
-- 输出 `medium`、`is_meaningful`、`evolution`、`richest_frame_id`
-- `richest_frame_id` 必须是 `SampledFrame.id` 全局 namespace 内的 id,不是视觉段内候选帧序号
-- 通过 `client = for_task(ctx.config, "slide_judge")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper
-
-**配置项**：使用 `tasks.slide_judge` 映射到的 LLM profile。
-
-**缓存键**：调用 `build_cache_key("visual_judge", {"segments": hash_json(VisualSegmentList), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/visual_pipeline/prompts/judge.jinja")})`。
-
-**错误处理**：LLM 输出违反 schema 或业务不变量 → `LLMError`。
-
-### 3.4 Stage 4: select
-
-**职责**：为每个有意义视觉段选择 1 张代表帧。
-
-**Input**：`VisualSegmentList` + `VisualJudgementList` + `VisualSampleIndex`。
-
-**Output**：`list[VisualSelection]`，落盘 `cache/{input_hash}/visual/selections.json`。
-
-**实现要点**：
-- `is_meaningful=False` 的段不产出代表帧
-- 优先使用 judge 给出的 `richest_frame_id`,该 id 必须对应 `SampledFrame.id` 且属于当前 `VisualSegment.frame_ids`
-- 必要时用拉普拉斯方差在候选帧中选择更清晰的一张
-- `VisualSelection.start/end` 从对应 `VisualSegment.start/end` 复制
-
-**配置项**：第一版可无。
-
-**缓存键**：调用 `build_cache_key("visual_select", {"segments": hash_json(VisualSegmentList), "judgements": hash_json(VisualJudgementList), "samples": hash_json(VisualSampleIndex), "config": hash_json(select 配置)})`。
-
-**错误处理**：代表帧路径不存在 → `CacheError`。
-
-### 3.5 Stage 5: describe
-
-**职责**：用强 VLM 为代表帧生成结合讲解文本的详细视觉描述。
-
-**Input**：`list[VisualSelection]` + `ctx.artifacts.audio.get_text_at(start, end, strip_refs=True)`。
-
-**Output**：`VisualDescriptionList`，落盘 `cache/{input_hash}/visual/descriptions.json`。
-
-**实现要点**：
-- 启动前由 CLI 调度层保证 `AudioArtifacts.is_complete() == True`
-- 对每个代表帧，取视觉段时间区间对应的讲解文本作为 VLM 文本上下文
-- 不直接读取 `refined_transcript.json`，只通过 `AudioArtifacts`
-- `VisualDescription.frame_id`、`image_source_path`、`start`、`end`、`medium` 从对应 `VisualSelection` 原样复制,再补充 VLM 生成的 `description`
-- 通过 `client = for_task(ctx.config, "slide_describe")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper
-
-**配置项**：使用 `tasks.slide_describe` 映射到的 LLM profile。
-
-**缓存键**：调用 `build_cache_key("visual_describe", {"selections": hash_json(list[VisualSelection]), "audio_text": hash_json(相关 AudioArtifacts 文本内容), "profile": hash_json(LLM profile), "prompt": hash_prompt_template("lvnotes/visual_pipeline/prompts/describe.jinja")})`。
-
-**错误处理**：音频产物未完成 → `CacheError`；VLM 失败 → `LLMError`。
-
----
-
-## 4. Schema
-
-多模管线相关 dataclass 集中定义在 `core/schemas/visual.py`，通过 `core/schemas/__init__.py` re-export。字段只放内容，不放配置元信息。
-
-```python
-from dataclasses import dataclass
-from pathlib import Path
-
-@dataclass(frozen=True)
-class SampledFrame:
-    id: int
-    timestamp: float
-    image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
-
-@dataclass(frozen=True)
-class VisualSampleIndex:
-    frames: list[SampledFrame]
-    duration: float
-
-@dataclass(frozen=True)
-class VisualSegment:
-    id: int
-    start: float
-    end: float
-    frame_ids: list[int]
-
-@dataclass(frozen=True)
-class VisualSegmentList:
-    segments: list[VisualSegment]
-
-@dataclass(frozen=True)
-class VisualJudgement:
-    segment_id: int
-    medium: str
-    is_meaningful: bool
-    evolution: str
-    richest_frame_id: int | None       # SampledFrame.id 全局 namespace 内的 id
-
-@dataclass(frozen=True)
-class VisualJudgementList:
-    judgements: list[VisualJudgement]
-
-@dataclass(frozen=True)
-class VisualSelection:
-    segment_id: int
-    frame_id: int
-    image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
-    start: float
-    end: float
-    medium: str
-
-@dataclass(frozen=True)
-class VisualDescription:
-    segment_id: int
-    frame_id: int
-    image_source_path: Path         # 相对 cache/{input_hash}/visual/frames/ 的路径
-    start: float
-    end: float
-    medium: str
-    description: str
-
-@dataclass(frozen=True)
-class VisualDescriptionList:
-    descriptions: list[VisualDescription]
+```yaml
+variants:
+  - name: default
+    phash_threshold: 8
+    histogram_threshold: 0.12
+    duplicate_phash_threshold: 2
+    duplicate_histogram_threshold: 0.03
+    duplicate_pixel_threshold: 0.02
+    max_static_seconds: null
+    crop: null
 ```
 
-### 不变量
+**缓存键**：`visual_filter` 使用 `sample.json` hash、filter 配置 hash 与 variants 内容 hash；`variants_file` 路径本身不进入 filter 配置 hash。cache manifest 只记录稳定产物；`filter_variants/` 用于调试比较，不是下游稳定合同。`--no-cache` 会重建 variants 与稳定产物。
 
-1. 所有 `id` 字段在各自 namespace 内 0-based 严格递增
-2. 所有 `start < end`
-3. 所有时间戳使用 `float` 秒数、精度毫秒
-4. `VisualJudgement.segment_id`、`VisualSelection.segment_id`、`VisualDescription.segment_id` 必须对应存在的 `VisualSegment.id`
-5. `VisualSelection.frame_id` 必须对应存在的 `SampledFrame.id`
-6. `VisualJudgement.richest_frame_id` 非空时必须对应存在的 `SampledFrame.id`,且属于对应 `VisualSegment.frame_ids`
-7. `VisualDescription.frame_id`、`image_source_path`、`start`、`end`、`medium` 必须从对应 `VisualSelection` 复制;`descriptions.json` 是 merge 阶段消费视觉信息的完整产物
+### Stage 3: semantic_filter
 
-不变量违反 → `AssertionError`，不 catch、不自动修复。
+**职责**：用弱 VLM 判断每张过滤后图片是否有语义价值，并筛掉讲者、黑屏、UI、空白或无笔记价值的画面。
 
----
+**Input**：`filtered_sample.json` 与 `visual/filter_frames/`。
 
-## 5. Downstream Interfaces — `VisualArtifacts`
+**Output**：`cache/{input_hash}/visual/semantic_frames/`、`cache/{input_hash}/visual/semantic_sample.json` 与 `cache/{input_hash}/visual/semantic_judgements.json`。
 
-`VisualArtifacts` 是多模管线对合并阶段的唯一稳定 API。合并阶段不允许 import `visual_pipeline/` 内部模块，只能通过 `ctx.artifacts.visual` 访问。纯音频模式下 `ctx.artifacts.visual is None`。
+**实现要点**：
+
+- 对每张 `filtered_sample.json` 中的图片独立判断。
+- `is_meaningful=true` 仅用于 PPT 正文页、章节标题页、公式、图表、表格、流程图、代码、demo、黑板/白板或其他有报告语义的画面。
+- `is_meaningful=false` 用于纯讲者镜头、黑屏、大面积空白、会议 UI、播放器 UI、转场、水印或无笔记价值画面。
+- meaningful 图片复制到 `visual/semantic_frames/`。
+- `semantic_sample.json` 复用 `VisualSampleIndex`，`image_source_path` 相对 `visual/semantic_frames/`。
+
+**缓存键**：`visual_semantic_filter` 使用 `filtered_sample.json` hash、弱 VLM profile hash 与 prompt hash。
+
+### Stage 4: align
+
+**职责**：把有语义图片按 timestamp 对齐到 refined text segments。文本 segment 是多模笔记结构的权威边界。
+
+**Input**：`semantic_sample.json`、`semantic_judgements.json` 与 `ctx.artifacts.audio.get_refined()`。
+
+**Output**：`cache/{input_hash}/visual/alignments.json`。
+
+**实现要点**：
+
+- `segment.start <= frame.timestamp < segment.end` 时分配到该文本 segment。
+- 不在任何 segment 内时分配到最近的 refined segment。
+- 一个文本 segment 内可以保留多张图，按 timestamp 排序。
+
+**缓存键**：`visual_align` 使用 semantic sample hash、semantic judgements hash 与 refined transcript hash。
+
+### Stage 5: describe
+
+**职责**：用强 VLM 为每张 aligned semantic frame 生成结合对应 refined text segment 的详细视觉描述。
+
+**Input**：`alignments.json`、`visual/semantic_frames/` 与 `ctx.artifacts.audio.get_refined()`。
+
+**Output**：`cache/{input_hash}/visual/descriptions.json`。
+
+**实现要点**：
+
+- CLI 调度层保证启动前 `AudioArtifacts.is_complete() == True`，且已运行 `align`。
+- 图片从 `visual/semantic_frames/` 解析。
+- `VisualDescription.frame_id`、`image_source_path`、`medium` 来自 `VisualAlignment`。
+- `VisualDescription.start/end` 使用对应 refined text segment 的 `start/end`。
+- LLM 调用通过 `for_task(ctx.config, "slide_describe")` 和 `complete_json(...)`。
+- 每张 aligned semantic frame 独立调用强 VLM，并发数由 `visual_pipeline.describe.concurrent_calls` 控制。
+
+**配置项**（`visual_pipeline.describe.*`）：
+
+- `concurrent_calls: int`，默认 `5`。
+
+## Schema
+
+多模 schema 定义在 `core/schemas/visual.py`，通过 `core/schemas/__init__.py` re-export。
+
+`VisualSampleIndex` 同时用于 `sample.json`、`filtered_sample.json` 与 `semantic_sample.json`：
+
+- `sample.json` 的 `image_source_path` 相对 `visual/raw_frames/`。
+- `filtered_sample.json` 的 `image_source_path` 相对 `visual/filter_frames/`。
+- `semantic_sample.json` 的 `image_source_path` 相对 `visual/semantic_frames/`。
+
+`VisualAlignment` 与 `VisualDescription` 的 `image_source_path` 相对 `visual/semantic_frames/`。
+
+关键不变量：
+
+1. `VisualSemanticJudgement.frame_id`、`VisualAlignment.frame_id`、`VisualDescription.frame_id` 使用同一个 `SampledFrame.id` namespace。
+2. `filtered_sample.json` 与 `semantic_sample.json` 保留 raw sample 的原始 frame id，不重新编号。
+3. 所有 `image_source_path` 必须是相对路径，不得是绝对路径或通过 `..` 逃逸对应帧目录。
+4. `descriptions.json` 是 merge 阶段消费视觉信息的完整产物。
+
+## VisualArtifacts
+
+`VisualArtifacts` 是多模管线对合并阶段的稳定 API。合并阶段不允许 import `visual_pipeline/` 内部模块。
 
 ```python
 class VisualArtifacts:
-    def __init__(self, input_hash: str, paths: PipelinePaths) -> None: ...
-
     def get_samples(self) -> VisualSampleIndex: ...
-    def get_segments(self) -> VisualSegmentList: ...
-    def get_judgements(self) -> VisualJudgementList: ...
-    def get_selections(self) -> list[VisualSelection]: ...
+    def get_filtered_samples(self) -> VisualSampleIndex: ...
+    def get_semantic_samples(self) -> VisualSampleIndex: ...
+    def get_semantic_judgements(self) -> VisualSemanticJudgementList: ...
+    def get_alignments(self) -> list[VisualAlignment]: ...
     def get_descriptions(self) -> VisualDescriptionList: ...
     def is_complete(self) -> bool: ...
 ```
 
-### 实现要点
+`is_complete()` 仅检查 `descriptions.json` 是否存在。
 
-- getter 惰性加载并缓存到实例字段
-- 路径全部经 `core/paths.py`
-- 产物文件不存在时抛 `CacheError("VisualArtifacts.get_xxx: <path> not found, stage 'xxx' may not have run")`
-- `is_complete()` 仅检查 `descriptions.json` 是否存在，不做 schema 校验
-
----
-
-## 6. Module Layout
+## Module Layout
 
 ```text
 lvnotes/visual_pipeline/
 ├── __init__.py
 ├── sample.py
-├── cluster.py
-├── judge.py
-├── select.py
+├── filter.py
+├── semantic_filter.py
+├── align.py
 ├── describe.py
 └── prompts/
-    ├── judge.jinja
+    ├── semantic_filter.jinja
     └── describe.jinja
 ```
 
-### Import 规则速查
+## Validation
 
-| 来源 | 允许？ |
-|---|---|
-| `core/`（schemas、artifacts、paths、timestamps、pipeline、cache、config、context、logging、exceptions、constants） | ✅ |
-| `media/` | ✅（仅 sample） |
-| `llm/` | ✅（仅 judge、describe） |
-| `audio_pipeline/` 内部 | ❌（必须经 `core/artifacts.AudioArtifacts`） |
-| `merge/` 内部 | ❌ |
-| `visual_pipeline/` 内的其他 stage 文件 | ❌（stage 间通过 `ctx.paths` 文件 IO 解耦） |
-| `openai` / `anthropic` 等 SDK 直接 import | ❌（必须经 `llm/`） |
-| `subprocess` 调 ffmpeg | ❌（必须经 `media/`） |
+多模管线验收：
 
----
-
-## 7. Dependencies
-
-### 项目内
-
-- `core/`：`schemas`、`artifacts`、`paths`、`timestamps`、`pipeline`、`cache`、`config`、`context`、`logging`、`exceptions`
-- `media/`：sample 用
-- `llm/`：judge、describe 用
-
-### 外部库
-
-- `Pillow`：图像处理
-- `jinja2`：渲染 prompt 模板
-
-具体依赖清单与版本以 `pyproject.toml` 为准。
-
----
-
-## 8. Stage Validation
-
-多模管线的每个 stage 独立验收：真实视频输入跑通、缓存命中、错误路径覆盖、类型检查通过、独立 CLI 调用可用。
-
-端到端验收使用 `lvnotes run <video> --mm`，并检查视觉描述、图片路径、时间戳和最终 Markdown 结构。
+- `lvnotes sample <video> --mm` 生成 `raw_frames/` 与 `sample.json`。
+- `lvnotes filter <video> --mm` 生成 `filter_variants/`、`filter_frames/` 与 `filtered_sample.json`。
+- `lvnotes semantic-filter <video> --mm` 生成 `semantic_frames/`、`semantic_sample.json` 与 `semantic_judgements.json`。
+- `lvnotes align <video> --mm` 在 refined audio 完成后生成 `alignments.json`。
+- `lvnotes run <video> --mm` 端到端生成带视觉图片和描述的 Markdown。

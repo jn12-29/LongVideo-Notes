@@ -16,38 +16,23 @@ class VisualSampleIndex:
 
 
 @dataclass(frozen=True)
-class VisualSegment:
-    id: int
-    start: float
-    end: float
-    frame_ids: list[int]
-
-
-@dataclass(frozen=True)
-class VisualSegmentList:
-    segments: list[VisualSegment]
-
-
-@dataclass(frozen=True)
-class VisualJudgement:
-    segment_id: int
+class VisualSemanticJudgement:
+    frame_id: int
     medium: str
     is_meaningful: bool
-    evolution: str
-    richest_frame_id: int | None
+    reason: str
 
 
 @dataclass(frozen=True)
-class VisualJudgementList:
-    judgements: list[VisualJudgement]
+class VisualSemanticJudgementList:
+    judgements: list[VisualSemanticJudgement]
 
 
 @dataclass(frozen=True)
-class VisualSelection:
+class VisualAlignment:
     segment_id: int
     frame_id: int
-    start: float
-    end: float
+    timestamp: float
     image_source_path: Path
     medium: str
 

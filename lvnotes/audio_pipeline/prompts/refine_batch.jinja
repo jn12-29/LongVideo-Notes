@@ -11,6 +11,7 @@ For each cleaned_text, write a faithful polished transcript in fluent written Ch
 
 Output format: return only JSON for one object: {"segments": [...]}.
 Each item in segments must be a RefinedSegment with fields id, start, end, topic, cleaned_text, summary, cross_refs.
+Write topic, cleaned_text, and summary in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide terms when preserving the original wording is clearer. Do not translate established English terms mechanically.
 Return exactly one RefinedSegment for every input part in this batch, in the same id order.
 Keep [[REF:N]] markers exactly when referencing earlier parts and list every N in cross_refs. Only reference earlier ids.
 

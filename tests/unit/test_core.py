@@ -15,6 +15,7 @@ from lvnotes.core.slugs import make_chapter_anchor
 from lvnotes.core.timestamps import format_hms, format_mmss, parse_ts_marker, render_timestamp
 from lvnotes.core.transcript import slice_transcript_text
 from lvnotes.merge import assemble
+from lvnotes.merge import unify
 from lvnotes.merge.assemble import _normalize_markdown_spacing, _render_refs, _strip_section_heading
 from lvnotes.merge import outline as outline_stage
 from lvnotes.merge.outline import _validate_outline
@@ -85,6 +86,31 @@ def test_build_paths_uses_source_named_output_note() -> None:
     assert make_timestamped_output_path(paths.output_note_md, "20260509-085423") == Path("output/20260420-金涌院士报告前10分钟音频-20260509-085423.md")
 
 
+def test_unify_ignores_visual_artifacts_in_audio_only_mode(tmp_path: Path) -> None:
+    ctx = _unify_ctx(tmp_path, "audio_only", visual=type("Visual", (), {"get_descriptions": lambda self: (_ for _ in ()).throw(AssertionError("should not read visual"))})())
+
+    assert unify._visual_descriptions(ctx) == []
+
+
+def test_unify_requires_visual_artifacts_in_multimodal_mode(tmp_path: Path) -> None:
+    ctx = _unify_ctx(tmp_path, "multimodal", visual=None)
+
+    with pytest.raises(Exception, match="visual descriptions"):
+        unify._visual_descriptions(ctx)
+
+
+def test_unify_visual_hash_distinguishes_empty_multimodal_from_audio_only() -> None:
+    assert unify._visual_hash("audio_only", []) == "audio_only"
+    assert unify._visual_hash("multimodal", []) != "audio_only"
+
+
+def _unify_ctx(tmp_path: Path, mode: str, visual: object | None) -> PipelineContext:
+    source = tmp_path / "lecture.mp4"
+    source.write_bytes(b"source")
+    paths = build_paths(source, tmp_path / "cache", tmp_path / "output", "inputhash")
+    return PipelineContext(source, "inputhash", mode, _assemble_config(), paths, ArtifactBundle(audio=type("Audio", (), {})(), visual=visual))  # type: ignore[arg-type]
+
+
 def test_assemble_writes_latest_and_timestamped_outputs(tmp_path: Path) -> None:
     ctx = _assemble_ctx(tmp_path)
 
@@ -101,6 +127,17 @@ def test_assemble_writes_latest_and_timestamped_outputs(tmp_path: Path) -> None:
     assert second.output_paths[1].exists()
     manifest = read_cache_manifest(ctx.paths.cache_note_md.with_name("note.md.cache.json"))
     assert manifest.output_paths == [ctx.paths.output_note_md, ctx.paths.cache_note_md]
+
+
+def test_assemble_cache_key_includes_mode(tmp_path: Path) -> None:
+    ctx = _assemble_ctx(tmp_path)
+    assemble.run(ctx)
+    multimodal_ctx = PipelineContext(ctx.source_path, ctx.input_hash, "multimodal", ctx.config, ctx.paths, ctx.artifacts)
+
+    output = assemble.run(multimodal_ctx)
+
+    assert output.cache_hit is False
+    assert "mode: multimodal" in ctx.paths.output_note_md.read_text(encoding="utf-8")
 
 
 def _assemble_ctx(tmp_path: Path) -> PipelineContext:

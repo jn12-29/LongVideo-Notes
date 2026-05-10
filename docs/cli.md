@@ -15,7 +15,7 @@ CLI 提供四类入口:
 | 端到端运行 | `lvnotes run <input-file>` | 默认纯音频模式,跑音频管线 + 合并阶段 |
 | 端到端多模 | `lvnotes run <input-file> --mm` | 显式启用多模 |
 | 查看产物 | `lvnotes inspect <namespace> <stage> <input-file>` | 查看中间产物摘要或路径 |
-| 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `sample` / `cluster` / `judge` / `select` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
+| 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `sample` / `filter` / `semantic-filter` / `align` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
 
 CLI 的职责:
 
@@ -119,11 +119,11 @@ extract → transcribe → segment → refine → unify → outline → section 
 
 ```text
 audio:  extract → transcribe → segment → refine ┐
-                                                     ├─ describe → unify → outline → section → assemble
-visual: sample  → cluster    → judge   → select ────┘
+                                                     ├─ align → describe → unify → outline → section → assemble
+visual: sample  → filter → semantic-filter ─────────┘
 ```
 
-`describe` 必须等 `AudioArtifacts.is_complete() == True`,并通过 `AudioArtifacts.get_text_at(start, end, strip_refs=True)` 读取讲解文本。
+`align` 和 `describe` 必须等 `AudioArtifacts.is_complete() == True`。`align` 将 `semantic_sample.json` 中的图片按 timestamp 映射到 refined text segments；`describe` 使用对应 refined segment 的文本作为图像理解上下文。
 
 `--head-minutes <minutes>` 会先在输入文件同目录生成或复用开头片段文件,再将该片段作为本次运行的输入。片段文件名为 `<source-stem>.head-<minutes>m<source-suffix>`,例如 `lecture.mp4 --head-minutes 10` 对应 `lecture.head-10m.mp4`。后续 `PipelineContext.source_path`、输入 hash、缓存目录、输出 Markdown 名称和所有 stage 输入都基于该片段文件。
 
@@ -151,7 +151,7 @@ lvnotes inspect merge note <input-file> --head-minutes 10 --paths
 
 默认输出摘要,不打印长正文。
 
-`inspect --help` 必须明确 `inspect` 不生成文件,只读取已有 artifact,并列出可读取的 audio / visual / merge artifact 名称。
+`inspect --help` 必须明确 `inspect` 不生成文件,不创建 cache/output 目录,只读取已有 artifact,并列出可读取的 audio / visual / merge artifact 名称。
 
 ### 3.3 音频 stage 子命令
 
@@ -196,28 +196,28 @@ lvnotes refine <input-file> --no-cache
 ```bash
 lvnotes sample <input-file> --mm
 lvnotes sample <input-file> --mm --head-minutes 10
-lvnotes cluster <input-file> --mm
-lvnotes judge <input-file> --mm
-lvnotes select <input-file> --mm
+lvnotes filter <input-file> --mm
+lvnotes semantic-filter <input-file> --mm
+lvnotes align <input-file> --mm
 lvnotes describe <input-file> --mm
 ```
 
 | 命令 | 调用 stage | 依赖 |
 |---|---|---|
 | `sample` | `visual_pipeline.sample.run(ctx)` | 视频输入 + `--mm` |
-| `cluster` | `visual_pipeline.cluster.run(ctx)` | sample 产物 |
-| `judge` | `visual_pipeline.judge.run(ctx)` | cluster 产物 |
-| `select` | `visual_pipeline.select.run(ctx)` | judge 产物 |
-| `describe` | `visual_pipeline.describe.run(ctx)` | select 产物 + audio refined |
+| `filter` | `visual_pipeline.filter.run(ctx)` | sample 产物 |
+| `semantic-filter` | `visual_pipeline.semantic_filter.run(ctx)` | filter 产物 |
+| `align` | `visual_pipeline.align.run(ctx)` | semantic-filter 产物 + audio refined |
+| `describe` | `visual_pipeline.describe.run(ctx)` | align 产物 + audio refined |
 
 多模 stage help 必须列出主要产物:
 
 | 命令 | 主要产物 |
 |---|---|
-| `sample` | `cache/{input_hash}/visual/frames/`, `cache/{input_hash}/visual/sample.json` |
-| `cluster` | `cache/{input_hash}/visual/segments.json` |
-| `judge` | `cache/{input_hash}/visual/judgements.json` |
-| `select` | `cache/{input_hash}/visual/selections.json` |
+| `sample` | `cache/{input_hash}/visual/raw_frames/`, `cache/{input_hash}/visual/sample.json` |
+| `filter` | `cache/{input_hash}/visual/filter_frames/`, `cache/{input_hash}/visual/filtered_sample.json`, `cache/{input_hash}/visual/filter_variants/` |
+| `semantic-filter` | `cache/{input_hash}/visual/semantic_frames/`, `cache/{input_hash}/visual/semantic_sample.json`, `cache/{input_hash}/visual/semantic_judgements.json` |
+| `align` | `cache/{input_hash}/visual/alignments.json` |
 | `describe` | `cache/{input_hash}/visual/descriptions.json` |
 
 多模 stage 命令必须要求 `--mm`,未传时明确拒绝执行。不能因为用户调用了 `describe` 就隐式启用多模。
@@ -350,9 +350,10 @@ assemble
 约束:
 
 - 音频管线 stage 1-4 顺序执行
-- 多模管线 stage 1-4 顺序执行
-- 音频管线和多模管线 stage 1-4 可并行
+- 多模管线 describe 之前的 stage 顺序执行
+- 音频管线和多模管线 describe 之前的 stage 可并行
 - `visual describe` 必须等待 `audio refined`
+- `visual describe` 内每张 aligned semantic frame 的强 VLM 调用可并发
 - 合并阶段必须等待所有上游完成
 
 调度层可用 `asyncio`、线程池或同步轮询实现,但 stage 对外接口保持同步。
@@ -371,7 +372,8 @@ audio_artifacts.is_complete() is True
 
 允许并行:
 
-- `run --mm` 下音频管线与多模管线前 4 个 stage 并行
+- `run --mm` 下音频管线与多模管线 describe 之前的 stage 并行
+- `visual describe` 内每张 aligned semantic frame 的强 VLM 调用并发
 - `merge.section` 内每章 LLM 调用并发
 
 不允许并行:
@@ -421,6 +423,8 @@ refine 的断点续跑只在 cache key 未变且没有 `--no-cache` 时使用已
 
 section 的 `--no-cache` 语义与 per-chapter cache 一致:跳过每章 manifest 命中判断,重新生成所有章节并覆盖 `sections/{chapter_id:03d}.md`;用户只想基于手工编辑的 sections 重新合成时应运行 `assemble --no-cache`,不要运行 `section --no-cache`。
 
+写入型命令包括 `run` 与所有 stage 子命令。CLI 在执行这些命令前对 `cache/{input_hash}/.lvnotes.lock` 获取独占锁;同一 cache root 下相同内容输入的写入型命令会串行执行。锁默认阻塞等待释放。`inspect` 不加锁、不创建 cache/output 目录,只读取已有产物。`--head-minutes` 创建裁剪文件时使用裁剪输出旁的隐藏锁文件保护,锁基于实际处理的裁剪文件计算后续 `input_hash`。
+
 ---
 
 ## 7. Inspect
@@ -432,7 +436,7 @@ section 的 `--no-cache` 语义与 per-chapter cache 一致:跳过每章 manifes
 - 产物大致内容是否合理
 - 失败是否因为上游缺产物
 
-`inspect` 不触发计算。产物缺失时提示先运行对应 stage。
+`inspect` 不触发计算,不获取写锁,不创建目录。产物缺失时提示先运行对应 stage。
 
 默认输出示例:
 
@@ -469,7 +473,7 @@ output/lecture-20260509-085423.md
 cache/abc123/note.md
 ```
 
-CLI 始终显示 stage 级 `running` / `done` / `cache hit`。可计数的长耗时任务使用 `tqdm` 进度条:ASR 按音频秒数近似推进,refine 按 segment 推进,visual describe 按 selection 推进,merge section 按 chapter job 推进。非 TTY 输出禁用动态进度条,只保留普通状态行和日志。
+CLI 始终显示 stage 级 `running` / `done` / `cache hit`。可计数的长耗时任务使用 `tqdm` 进度条:ASR 按音频秒数近似推进,refine 按 segment 推进,visual describe 按 alignment 推进,merge section 按 chapter job 推进。非 TTY 输出禁用动态进度条,只保留普通状态行和日志。
 
 日志遵循 `coding-standards.md`:
 
@@ -630,9 +634,9 @@ lvnotes refine lecture.mp4 --no-cache
 
 lvnotes sample lecture.mp4 --mm
 lvnotes sample lecture.mp4 --mm --head-minutes 10
-lvnotes cluster lecture.mp4 --mm
-lvnotes judge lecture.mp4 --mm
-lvnotes select lecture.mp4 --mm
+lvnotes filter lecture.mp4 --mm
+lvnotes semantic-filter lecture.mp4 --mm
+lvnotes align lecture.mp4 --mm
 lvnotes describe lecture.mp4 --mm
 
 lvnotes unify lecture.mp4

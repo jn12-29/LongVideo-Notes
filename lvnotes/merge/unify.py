@@ -2,6 +2,7 @@ import logging
 
 from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json
 from lvnotes.core.context import PipelineContext
+from lvnotes.core.exceptions import CacheError
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.schemas import ContentBlock, VisualDescription, VisualSlot
 
@@ -14,7 +15,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     refined = ctx.artifacts.audio.get_refined()
     descriptions = _visual_descriptions(ctx)
     refined_hash = hash_json(refined)
-    visual_hash = hash_json(descriptions) if descriptions else "audio_only"
+    visual_hash = _visual_hash(ctx.mode, descriptions)
     cache_key = build_cache_key("unify", {"refined": refined_hash, "visual": visual_hash})
     output_paths = [ctx.paths.content_blocks_json]
     if not ctx.no_cache:
@@ -30,9 +31,21 @@ def run(ctx: PipelineContext) -> StageOutput:
 
 
 def _visual_descriptions(ctx: PipelineContext) -> list[VisualDescription]:
-    if ctx.artifacts.visual is None:
+    if ctx.mode == "audio_only":
         return []
+    if ctx.mode != "multimodal":
+        raise AssertionError("unknown pipeline mode")
+    if ctx.artifacts.visual is None:
+        raise CacheError("multimodal unify requires visual descriptions")
     return ctx.artifacts.visual.get_descriptions().descriptions
+
+
+def _visual_hash(mode: str, descriptions: list[VisualDescription]) -> str:
+    if mode == "audio_only":
+        return "audio_only"
+    if mode == "multimodal":
+        return hash_json(descriptions)
+    raise AssertionError("unknown pipeline mode")
 
 
 def _slots_for(start: float, end: float, descriptions: list[VisualDescription]) -> list[VisualSlot]:

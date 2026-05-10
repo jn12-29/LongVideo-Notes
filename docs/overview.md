@@ -65,15 +65,15 @@
 
 ![longvideo_notes_pipeline](./assets/longvideo_notes_pipeline.svg)
 
-图中实线为必经路径(纯音频模式即可完成);紫色虚线框内为多模管线,仅在多模模式下启用,其入口与出口箭头都是虚线。橙色虚线 `refined_transcript` 表示跨管线依赖:多模管线的 stage 5 (describe) 需要音频管线 stage 4 (refine) 的产物。
+图中实线为必经路径(纯音频模式即可完成);紫色虚线框内为多模管线,仅在多模模式下启用,其入口与出口箭头都是虚线。橙色虚线 `refined_transcript` 表示跨管线依赖:多模管线的 describe stage 需要音频管线 stage 4 (refine) 的产物。
 
 调度上的含义:
 
 - 音频管线 stage 1-4 顺序执行
-- 多模管线 stage 1-4 顺序执行,**与音频管线并行**(互不依赖)
-- 多模管线 stage 5(describe)需要音频管线 stage 4(refine)的产物,因此:
-  - 如果多模管线 stage 1-4 比音频管线 stage 1-4 快,stage 5 在音频管线完成后才能启动
-  - 反之,多模管线 stage 4 完成时音频管线已经好了,stage 5 直接接上
+- 多模管线 describe 之前的 stage 顺序执行,**与音频管线并行**(互不依赖)
+- 多模管线 describe 需要音频管线 stage 4(refine)的产物,因此:
+  - 如果多模管线 `semantic_filter` 比音频管线 stage 1-4 快,`align` 和 `describe` 在音频管线完成后才能启动
+  - 反之,音频管线完成时 `semantic_filter` 已经好了,`align` 和 `describe` 直接接上
 - 合并阶段在两条管线全部完成后启动
 - 纯音频模式下多模管线整体跳过,合并阶段直接消费 `AudioArtifacts`
 
@@ -88,17 +88,17 @@
 
 Stage 3 是 LLM 一次性看全文输出切分点(短输出,避免长输出衰减)。Stage 4 默认使用 adaptive refine:先尝试一次生成完整 `RefinedTranscript`,失败后按 batch 生成,单个 batch 失败再退回逐段 serial。refine 会将 ASR 原文整理成带中文标点的书面表达,并识别跨段概念引用,以内部 marker `[[REF:N]]` 形式嵌入清洗文本;最终笔记由合并阶段据此渲染章节内交叉引用。
 
-### 3.2 多模管线(5 个 stage,仅多模模式启用)
+### 3.2 多模管线(5 个主 stage,仅多模模式启用)
 
 | Stage | 名称     | 工具           | 产物                                                      |
 | ----- | -------- | -------------- | --------------------------------------------------------- |
-| 1     | sample   | ffmpeg         | 1fps 采样帧                                               |
-| 2     | cluster  | pHash + 直方图 | 视觉段(连续渐变合并)                                      |
-| 3     | judge    | 弱 VLM         | 每段的 medium / is_meaningful / evolution / richest_frame_id |
-| 4     | select   | 拉普拉斯方差   | 每段 1 张代表帧(无意义段丢弃)                             |
-| 5     | describe | 强 VLM + 转录  | 每个代表帧的详细图文描述                                  |
+| 1     | sample   | ffmpeg         | `raw_frames/` + `sample.json`                             |
+| 2     | filter   | pHash + 直方图 | `filter_variants/` + `filter_frames/` + `filtered_sample.json` |
+| 3     | semantic_filter | 弱 VLM | `semantic_frames/` + `semantic_sample.json` + `semantic_judgements.json` |
+| 4     | align    | 纯逻辑 + refined text segments | `alignments.json` |
+| 5     | describe | 强 VLM + refined text，并发 | 每张 aligned semantic frame 的详细图文描述 |
 
-Stage 2 用滑动窗口聚类(双阈值 + 跟段首累积比对),把相邻渐变帧合并为同一段。Stage 3 给每段传首/中/末三帧让弱 VLM 判断段的语义属性。Stage 5 是图文联合理解:把代表帧 + 该段时间区间的转录文字一起喂给强 VLM,让它结合两者输出详细描述。
+Stage 2 默认不裁剪,用完整帧做本地重复过滤。Stage 3 用弱 VLM 删除讲者、黑屏、UI、空白和无笔记价值画面。Stage 4 以 refined text segment 为权威边界,按图片 timestamp 对齐文本段;一个文本段内多张图全部保留。Stage 5 将 aligned semantic frame + 对应 refined text 一起喂给强 VLM,并发输出详细视觉描述。
 
 ### 3.3 合并阶段
 
@@ -194,9 +194,9 @@ longvideo-notes/
 │   │
 │   ├── visual_pipeline/         (多模管线)
 │   │   ├── sample.py
-│   │   ├── cluster.py
-│   │   ├── judge.py
-│   │   ├── select.py
+│   │   ├── filter.py
+│   │   ├── semantic_filter.py
+│   │   ├── align.py
 │   │   ├── describe.py
 │   │   └── prompts/
 │   │
@@ -223,11 +223,15 @@ longvideo-notes/
         │   ├── audio.wav
         │   └── extract.json
         ├── visual/              (多模模式下)
-        │   ├── frames/
+        │   ├── raw_frames/
+        │   ├── filter_frames/
+        │   ├── filter_variants/
+        │   ├── semantic_frames/
         │   ├── sample.json
-        │   ├── segments.json
-        │   ├── judgements.json
-        │   ├── selections.json
+        │   ├── filtered_sample.json
+        │   ├── semantic_sample.json
+        │   ├── semantic_judgements.json
+        │   ├── alignments.json
         │   └── descriptions.json
         ├── transcript_raw.json
         ├── segments.json
@@ -339,18 +343,18 @@ segments = complete_json(client, messages, SegmentList, options)
 
 ### 5.6 `visual_pipeline/` —— 多模管线
 
-**职责**:实现多模处理的 5 个 stage(sample / cluster / judge / select / describe)。
+**职责**:实现多模处理的主链路 stage(sample / filter / semantic_filter / align / describe)。
 
 **原则**:
 
 - 同 `audio_pipeline/` 的原则。
-- 通过 `AudioArtifacts` 接口读音频管线的产物(仅 stage 5 describe 需要)。
+- 通过 `AudioArtifacts` 接口读音频管线的产物(`align` 与 `describe` 需要)。
 - **不引用 `audio_pipeline/` 内部模块**,只用 `AudioArtifacts`。
-- 5 个 stage 均通过统一 `run(ctx) -> StageOutput` 接口执行。
+- 所有 stage 均通过统一 `run(ctx) -> StageOutput` 接口执行。
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
 
-**字段命名约定**:视觉相关 schema 使用 `richest_frame_id` 表示 judge 选出的信息量最高帧,使用 `image_source_path` 表示相对 `visual_frames_dir` 的图片源路径;最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。合并阶段消费视觉信息时沿用这些字段语义,不再引入 `richest_frame`、`frame_path` 等同义字段。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
+**字段命名约定**:视觉相关 schema 使用 `frame_id` 表示原始 sampled frame namespace 中的帧编号,使用 `image_source_path` 表示相对当前视觉产物帧目录的图片源路径。`sample.json` 相对 `raw_frames/`;`filtered_sample.json` 相对 `filter_frames/`;`semantic_sample.json`、`alignments.json`、`descriptions.json` 相对 `semantic_frames/`。最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。合并阶段消费视觉信息时沿用这些字段语义,不再引入 `richest_frame`、`frame_path` 等同义字段。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
 
 ### 5.7 `merge/` —— 合并与笔记生成
 
@@ -360,7 +364,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 - 通过 `AudioArtifacts` / `VisualArtifacts` 读上游产物,不直接读文件。
 - 同样不直接 import 上游管线模块。
-- `unify.py` 处理两种模式(纯音频 / 多模)的合并逻辑,下游 outline / section / assemble 对模式无感。
+- `unify.py` 处理两种模式(纯音频 / 多模)的合并逻辑;outline / section 消费统一的 `ContentBlock` 序列;assemble 只把本次 `mode` 写入 frontmatter 并纳入 assemble cache key。
 - 时间戳与跨段引用全程使用内部 marker(`[[TS:...]]` / `[[REF:...]]`),只在 `assemble.py` 做最终人类可读替换。
 
 ### 5.8 `cli/` —— 入口
@@ -403,7 +407,7 @@ segments = complete_json(client, messages, SegmentList, options)
 3. **ASR 抽象**:`asr/`(base、faster_whisper_local、factory)。
 4. **音频管线**:按 stage 顺序 extract → transcribe → segment → refine。
 5. **合并阶段**:`merge/unify.py` + `outline` + `section` + `assemble`,支持纯音频和多模输入。
-6. **多模管线**:sample → cluster → judge → select → describe。
+6. **多模管线**:sample → filter → semantic_filter → align → describe。
 7. **测试与打磨**:用真实音频/视频跑全流程,调 prompt、调阈值、修 bug。
 
 每一步完成的"验收标准"是:
@@ -473,10 +477,18 @@ audio_pipeline:
 visual_pipeline:
   sample:
     fps: 1
-  cluster:
-    phash_low_threshold: 5
-    phash_high_threshold: 15
-  # ... 其他 stage 配置
+  filter:
+    active_variant: default
+    variants_file: filter_variants.yaml
+    phash_threshold: 8
+    histogram_threshold: 0.12
+    duplicate_phash_threshold: 2
+    duplicate_histogram_threshold: 0.03
+    duplicate_pixel_threshold: 0.02
+    max_static_seconds: null
+    crop: null
+  describe:
+    concurrent_calls: 5
 
 merge:
   outline:
@@ -511,7 +523,7 @@ merge:
 - `docs/media.md` —— media 模块权威:ffmpeg / ffprobe 唯一入口详细设计。
 - `docs/asr.md` —— ASR 模块权威:ASR 抽象与 faster-whisper 本地实现详细设计。
 - `docs/audio-pipeline.md` —— 音频管线权威:4 个 stage 的详细设计与接口契约。
-- `docs/visual-pipeline.md` —— 多模管线权威:5 个 stage 的详细设计。
+- `docs/visual-pipeline.md` —— 多模管线权威:sample / filter / semantic_filter / align / describe。
 - `docs/merge.md` —— 合并阶段权威:最终 Markdown 生成与用户产物契约。
 
 每份管线文档都按以下结构组织:Overview、Design Considerations(设计要点)、Stages(含每个 stage 的 input/output schema、实现要点、配置项、缓存规则、错误处理)、Schema、Downstream Interfaces、Module Layout、Dependencies、Implementation Order。
