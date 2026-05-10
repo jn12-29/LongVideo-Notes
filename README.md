@@ -19,21 +19,55 @@
 
 ```bash
 python -m lvnotes --help
-lvnotes run <input-file>
-lvnotes run <input-file> --mm
-lvnotes run <input-file> --head-minutes 10
-lvnotes inspect audio refined <input-file>
-lvnotes inspect merge note <input-file> --paths
-lvnotes assemble <input-file> --no-cache
+lvnotes run <input-path>
+lvnotes run <input-path> --mm
+lvnotes run ./courses --mm
+lvnotes run <input-path> --head-minutes 10
+lvnotes inspect audio refined <input-path>
+lvnotes inspect merge note <input-path> --paths
+lvnotes assemble <input-path> --no-cache
 ```
 
-默认走纯音频模式；只有显式传 `--mm` 时才启用多模管线。
+### 命令说明
+
+| 命令 | 含义 |
+|---|---|
+| `lvnotes run <input-path>` | 端到端生成 Markdown 笔记。默认走纯音频模式,会依次跑音频管线和合并阶段。 |
+| `lvnotes run <input-path> --mm` | 端到端多模运行。视频文件会额外抽帧、筛图、对齐画面并结合视觉内容生成笔记;音频文件仍走纯音频模式。 |
+| `lvnotes inspect <namespace> <stage> <input-path>` | 只读查看已有中间产物或最终产物信息,不重新计算、不创建文件、不加写锁。常用于确认某个 stage 是否已产出结果。 |
+| `lvnotes extract <input-path>` | 从音频或视频中抽取标准 wav,生成音频抽取元信息。 |
+| `lvnotes transcribe <input-path>` | 读取抽取后的 wav,调用 ASR 生成原始转录。 |
+| `lvnotes segment <input-path>` | 基于原始转录生成语义分段。 |
+| `lvnotes refine <input-path>` | 清洗、整理分段转录,生成后续合并阶段使用的 refined transcript。 |
+| `lvnotes sample <input-path> --mm` | 从视频中按配置采样原始帧。 |
+| `lvnotes filter <input-path> --mm` | 对采样帧做本地去重和基础过滤。 |
+| `lvnotes semantic-filter <input-path> --mm` | 用 VLM 判断过滤后帧是否有笔记价值。 |
+| `lvnotes align <input-path> --mm` | 将保留的关键帧按时间戳对齐到 refined transcript 段落。 |
+| `lvnotes describe <input-path> --mm` | 结合对应时间段的讲解文本,对关键画面生成详细视觉描述。 |
+| `lvnotes unify <input-path>` | 把音频内容和可选视觉描述合并成统一内容块。 |
+| `lvnotes outline <input-path>` | 基于内容块生成章节大纲。 |
+| `lvnotes section <input-path>` | 按章节生成 Markdown 正文片段。 |
+| `lvnotes assemble <input-path>` | 将章节片段组装成 latest 笔记、带时间戳归档笔记和 cache debug copy。 |
+
+常用选项：
+
+| 选项 | 含义 |
+|---|---|
+| `--mm` | 对视频输入启用多模管线;音频输入仍保持纯音频模式。 |
+| `--head-minutes <minutes>` | 只处理每个媒体文件开头指定分钟数,用于快速试跑。 |
+| `--config <path>` | 指定配置文件路径;默认读取当前目录的 `config.yaml`。 |
+| `--no-cache` | 跳过当前命令涉及 stage 的缓存读取,强制重新计算。 |
+| `--debug` | 启用 refine 开发期审核流程,主要用于检查第一段清洗效果。 |
+| `--paths` | `inspect` 专用,只输出目标产物路径。 |
+| `--json` | `inspect` 专用,输出原始产物内容;目录输入时输出聚合 JSON。 |
+
+输入路径可以是单个媒体文件或目录。目录输入会递归扫描支持的本地音视频文件,按相对路径排序后逐个处理；隐藏路径和已生成的 `*.head-<minutes>m.*` 裁剪文件会跳过。默认走纯音频模式；只有显式传 `--mm` 时视频文件才启用多模管线。目录输入加 `--mm` 时,视频文件走多模,音频文件自动走纯音频。
 `lvnotes --help` 会展示推荐命令、模式规则、常用选项和 stage 调试入口。
 各命令的 `--help` 会列出该命令会生成或读取的主要文件。
-传 `--head-minutes <minutes>` 时，CLI 会先在输入文件同目录生成或复用 `<stem>.head-<minutes>m<suffix>`，然后只处理该裁剪文件。
-写入型命令会对同一输入的 cache 目录获取独占锁；`inspect` 保持只读，不加锁也不创建目录。
+传 `--head-minutes <minutes>` 时，CLI 会先在每个媒体文件同目录生成或复用 `<stem>.head-<minutes>m<suffix>`，然后只处理该裁剪文件。
+写入型命令会对每个媒体文件对应的 cache 目录获取独占锁；`inspect` 保持只读，不加锁也不创建目录。
 运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。`visual describe` 和 `merge section` 会按配置并发调用 LLM/VLM。
-最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
+单文件输入的最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。目录输入会在 `output/` 下保留输入目录内的相对目录结构,避免同名文件互相覆盖。
 
 CLI 默认查找当前目录下的 `config.yaml`，也可通过 `--config <path>` 指定配置文件。可从 `config.example.yaml` 复制并按本地 LLM / ASR 环境调整。
 LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 profile 的任务都会继承。

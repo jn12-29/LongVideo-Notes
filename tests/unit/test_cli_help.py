@@ -9,13 +9,14 @@ def test_top_level_help_guides_common_workflow() -> None:
 
     assert result.exit_code == 0
     assert "Recommended workflow:" in result.output
-    assert "lvnotes run <input-file>" in result.output
-    assert "lvnotes run <input-file> --mm" in result.output
-    assert "lvnotes run <input-file> --head-minutes 10" in result.output
+    assert "lvnotes run <input-path>" in result.output
+    assert "lvnotes run <input-path> --mm" in result.output
+    assert "lvnotes run ./courses --mm" in result.output
+    assert "lvnotes run <input-path> --head-minutes 10" in result.output
     assert "audio-only mode" in result.output
     assert "multimodal mode" in result.output
-    assert "lvnotes inspect merge note <input-file> --paths" in result.output
-    assert "lvnotes inspect merge note <input-file> --head-minutes 10 --paths" in result.output
+    assert "lvnotes inspect merge note <input-path> --paths" in result.output
+    assert "lvnotes inspect merge note <input-path> --head-minutes 10 --paths" in result.output
 
 
 def test_top_level_help_lists_common_options() -> None:

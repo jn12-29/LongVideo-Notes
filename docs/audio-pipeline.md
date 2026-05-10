@@ -85,7 +85,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 
 **职责**:把输入视频/音频文件抽取成 16kHz mono `audio.wav`,附带元信息。
 
-**Input**:输入文件路径(来自 `ctx.source_path`,可为本地视频或音频)。
+**Input**:输入媒体文件路径(来自 `ctx.source_path`,可为本地视频或音频)。
 
 **Output**:`AudioExtractResult`(schema 见 §4)。落盘 `cache/{input_hash}/audio/audio.wav` + `cache/{input_hash}/audio/extract.json`。
 

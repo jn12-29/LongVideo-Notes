@@ -20,7 +20,7 @@
 - 多说话人区分
 - 在线协作 / 笔记同步
 - 移动端
-- 视频平台的下载器(B 站、YouTube 等)。输入只接受本地文件
+- 视频平台的下载器(B 站、YouTube 等)。输入只接受本地媒体文件或本地目录
 - 笔记导出格式扩展(PDF / Word / Notion)。输出仅 Markdown
 - 笔记问答 / RAG / 向量索引
 - **多语种通用性**。第一版仅在中文输入上验证,prompt 模板写死中文。英文 / 日文输入可能可用但不保证质量,后续再参数化
@@ -33,18 +33,19 @@
 
 - 本地视频文件:`.mp4`, `.mkv`, `.webm`, `.mov` 等 ffmpeg 支持的格式
 - 本地音频文件:`.mp3`, `.wav`, `.m4a`, `.flac` 等
-- 输入文件路径通过 CLI 参数提供
+- 本地目录:递归扫描目录下支持的媒体文件,跳过隐藏路径和已生成的 `*.head-<minutes>m.*` 裁剪文件
+- 输入路径通过 CLI 参数提供,可以是单个媒体文件或目录
 
 ### 2.2 处理模式
 
 - **纯音频模式**:默认模式。只走音频管线,产出基于讲解内容的笔记。适用于音频文件、或视频但不需要画面信息的场景。
 - **多模模式**:显式传 `--mm` 时启用。音频管线 + 多模管线并行,画面和讲解联合生成笔记。适用于含 PPT / 板书 / 代码演示的教学视频。
 
-模式只由 CLI 参数决定。输入是音频文件时强制纯音频模式;输入是视频文件时默认纯音频模式,显式传 `--mm` 才启用多模。配置文件只提供各 stage 的参数,不提供额外的音频/多模启停开关,避免 `--mm` 与配置形成双源事实。
+模式只由 CLI 参数决定。输入是音频文件时强制纯音频模式;输入是视频文件时默认纯音频模式,显式传 `--mm` 才启用多模。目录输入逐个媒体文件独立判定模式;目录输入加 `--mm` 时,视频文件走多模,音频文件自动走纯音频。配置文件只提供各 stage 的参数,不提供额外的音频/多模启停开关,避免 `--mm` 与配置形成双源事实。
 
 ### 2.3 输出
 
-- Markdown 笔记：`output_dir/<source-stem>.md` 作为 latest 文件，`output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档，含:
+- Markdown 笔记：单文件输入时 latest 文件和带时间戳归档写在 `output_dir/` 下；目录输入时在 `output_dir/` 下保留输入目录内的相对目录结构，含:
   - 自动生成的章节结构
   - 每章正文(清洗后的讲解内容 + 视觉内容描述)
   - 关键画面截图(多模模式下)
@@ -107,7 +108,7 @@ Stage 2 默认不裁剪,用完整帧做本地重复过滤。Stage 3 用弱 VLM �
 | unify    | 纯逻辑     | `ContentBlock` 序列(按时间排序,含转录 + 可选视觉信息) |
 | outline  | LLM        | 章节结构 (`outline.json`)                             |
 | section  | LLM (并发) | 每章 Markdown (`sections/{chapter_id:03d}.md`),保留内部 marker |
-| assemble | 纯逻辑     | 最终 `output_dir/<source-stem>.md` 与 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md`,marker 替换为人类可读形态          |
+| assemble | 纯逻辑     | 最终 latest Markdown 与带时间戳归档 Markdown,marker 替换为人类可读形态          |
 
 `ContentBlock` 是统一抽象:纯音频模式下所有 block 没有视觉字段,多模模式下有视觉的 block 含画面+描述。下游 outline / section 不区分两种模式。
 
@@ -242,7 +243,7 @@ longvideo-notes/
         ├── outline.json
         ├── sections/
         │   └── {chapter_id:03d}.md
-        └── note.md              (cache 副本;最终产物写入 output_dir/<source-stem>.md 和带时间戳归档文件)
+        └── note.md              (cache 副本;最终产物写入 output_dir 下的 latest Markdown 和带时间戳归档文件)
 ```
 
 ---
@@ -375,7 +376,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 **原则**:
 
-- 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes inspect`、以及顶层 stage 命令(如 `lvnotes extract <input-file>`、`lvnotes transcribe <input-file>`、`lvnotes outline <input-file>`、`lvnotes assemble <input-file>`)。
+- 用 typer 或 click,子命令风格:`lvnotes run`、`lvnotes inspect`、以及顶层 stage 命令(如 `lvnotes extract <input-path>`、`lvnotes transcribe <input-path>`、`lvnotes outline <input-path>`、`lvnotes assemble <input-path>`)。
 - 调度结构按双管线设计。调度层可以并发执行音频管线和多模管线,但每个 stage 对外仍固定暴露同步 `run(ctx) -> StageOutput` 接口;多模管线 disabled 时直接跳过。
 - refine stage 的开发期审核能力通过 CLI 参数暴露,如 `lvnotes refine --debug`;该开关不进入配置文件。
 - 不在 CLI 写业务逻辑。CLI 只负责"解析参数 → 配置 Pipeline → 启动 → 处理输出"。

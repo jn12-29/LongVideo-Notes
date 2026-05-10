@@ -25,7 +25,7 @@ def test_make_context_uses_trimmed_path_for_hash_and_paths(monkeypatch, tmp_path
         hashed_paths.append(path)
         return "trimhash"
 
-    def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str):  # type: ignore[no-untyped-def]
+    def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str, output_subdir: Path | None = None):  # type: ignore[no-untyped-def]
         build_paths_sources.append(source_path)
         return _paths(tmp_path, source_path)
 
@@ -53,7 +53,7 @@ def test_make_context_inspect_resolves_existing_trim_without_creating(monkeypatc
     monkeypatch.setattr(app, "resolve_head_trim_path", lambda path, minutes: resolved.append(path) or trimmed)
     monkeypatch.setattr(app, "probe_media", lambda path: SimpleNamespace(audio=object(), video=None))
     monkeypatch.setattr(app, "hash_file", lambda path: "trimhash")
-    monkeypatch.setattr(app, "build_paths", lambda source_path, cache_dir, output_dir, input_hash: _paths(tmp_path, source_path))
+    monkeypatch.setattr(app, "build_paths", lambda source_path, cache_dir, output_dir, input_hash, output_subdir=None: _paths(tmp_path, source_path))
 
     ctx = app._make_context(source, None, False, False, False, False, head_minutes=10.0, create_trim=False, create_dirs=False)
 

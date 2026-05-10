@@ -39,10 +39,11 @@ class PipelinePaths:
     output_note_md: Path
 
 
-def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str) -> PipelinePaths:
+def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str, output_subdir: Path | None = None) -> PipelinePaths:
     run_dir = cache_dir / input_hash
     audio_dir = run_dir / "audio"
     visual_dir = run_dir / "visual"
+    output_parent = output_dir if output_subdir is None else output_dir / output_subdir
     output_stem = make_output_stem(source_path)
     return PipelinePaths(
         source_path=source_path,
@@ -72,7 +73,7 @@ def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash
         content_blocks_json=run_dir / "content_blocks.json",
         outline_json=run_dir / "outline.json",
         cache_note_md=run_dir / "note.md",
-        output_note_md=output_dir / f"{output_stem}.md",
+        output_note_md=output_parent / f"{output_stem}.md",
     )
 
 

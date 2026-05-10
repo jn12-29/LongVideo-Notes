@@ -15,9 +15,9 @@
 | unify | 纯逻辑 | `content_blocks.json`（`ContentBlock` 序列） |
 | outline | LLM (经 `llm/`) | `outline.json`（章节结构） |
 | section | LLM (经 `llm/`)，并发 | `sections/{chapter_id:03d}.md` × N（`chapter_id` 从 1 开始） |
-| assemble | 纯逻辑 | `output_dir/<source-stem>.md` 与 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md`（最终用户产物） |
+| assemble | 纯逻辑 | `output_dir/<relative-dir>/<source-stem>.md` 与 `output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md`（最终用户产物） |
 
-**对外产物**：`output_dir/<source-stem>.md`（latest 笔记）与 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md`（本次导出归档）以及调试用的中间产物（`outline.json` / `sections/*.md` / `content_blocks.json`）。合并阶段是管线终点，没有 downstream 模块，但产物形态构成**用户接口契约**，详见 §5。
+**对外产物**：`output_dir/<relative-dir>/<source-stem>.md`（latest 笔记）与 `output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md`（本次导出归档）以及调试用的中间产物（`outline.json` / `sections/*.md` / `content_blocks.json`）。单文件输入时 `<relative-dir>` 为空;目录输入时保留输入目录内的相对目录结构。合并阶段是管线终点，没有 downstream 模块，但产物形态构成**用户接口契约**，详见 §5。
 
 **本阶段不知道两条管线的内部实现**——只通过 `ctx.artifacts.audio` / `ctx.artifacts.visual` 读取 `AudioArtifacts` / `VisualArtifacts`，禁止 `from audio_pipeline import ...` 或 `from visual_pipeline import ...`。`ctx.artifacts` 本身是 `ArtifactBundle`。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2 的强制结论。
 
@@ -201,7 +201,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 **Input**：`Outline` + `list[ContentBlock]` + `sections/{chapter_id:03d}.md` × N，`chapter_id` 从 1 开始。
 
-**Output**：`output_dir/<source-stem>.md` 作为 latest 用户产物，`output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。`cache/{input_hash}/note.md` 作为 debug/cache copy，便于调试、inspect 与断点续跑。
+**Output**：`output_dir/<relative-dir>/<source-stem>.md` 作为 latest 用户产物，`output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。单文件输入时 `<relative-dir>` 为空;目录输入时保留输入目录内的相对目录结构。`cache/{input_hash}/note.md` 作为 debug/cache copy，便于调试、inspect 与断点续跑。
 
 **实现要点**：
 
@@ -384,8 +384,8 @@ class Outline:
 ### 稳定的产物
 
 - `cache/{input_hash}/note.md` —— Markdown 笔记 debug/cache copy（UTF-8），便于调试与断点续跑
-- `output_dir/<source-stem>.md` —— latest 最终用户产物
-- `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` —— 本次导出归档最终用户产物
+- `output_dir/<relative-dir>/<source-stem>.md` —— latest 最终用户产物
+- `output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md` —— 本次导出归档最终用户产物
 - `cache/{input_hash}/outline.json` —— `Outline` 序列化，便于工具按章节切分笔记或重新生成单章
 - `cache/{input_hash}/sections/{chapter_id:03d}.md` —— 各章独立 markdown，便于用户单独编辑后重新 assemble
 - `cache/{input_hash}/content_blocks.json` —— `list[ContentBlock]` 序列化，调试用
@@ -393,14 +393,14 @@ class Outline:
 
 ### CLI 访问入口
 
-CLI 提供 `lvnotes inspect <namespace> <stage> <input-file>` 查看任意中间产物，并通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline <input-file>`、`lvnotes assemble <input-file>`；实现时在 `cli/app.py` 中描述）。
+CLI 提供 `lvnotes inspect <namespace> <stage> <input-path>` 查看任意中间产物，并通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline <input-path>`、`lvnotes assemble <input-path>`；实现时在 `cli/app.py` 中描述）。
 
 ### 用户编辑流程支持
 
 用户编辑某章 `sections/{chapter_id:03d}.md`（如 `sections/001.md`）后想重新合成笔记：
 
 ```bash
-lvnotes assemble <input-file> --no-cache  # 跳过 assemble 缓存，重读 sections，重新生成 latest 与带时间戳归档笔记
+lvnotes assemble <input-path> --no-cache  # 跳过 assemble 缓存，重读 sections，重新生成 latest 与带时间戳归档笔记
 ```
 
 不需要重跑 section LLM。这种工作流由 per-chapter 缓存 + `assemble` 是纯逻辑共同支持。
@@ -467,7 +467,7 @@ lvnotes/merge/
 2. 缓存机制工作（再跑一次能命中缓存）
 3. 错误路径有测试覆盖
 4. 类型检查通过
-5. 独立 CLI 调用可用（如 `lvnotes outline <input-file>`、`lvnotes assemble <input-file> --no-cache`）
+5. 独立 CLI 调用可用（如 `lvnotes outline <input-path>`、`lvnotes assemble <input-path> --no-cache`）
 6. 至少一个其他模块的范例参照（除第一个 stage 外，参照 `audio_pipeline/refine.py` 等）
 
 任意一条不满足不算完成，不要进下一个 stage。

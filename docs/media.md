@@ -19,7 +19,7 @@
 
 全项目只有 `media/` 允许直接使用 `subprocess` 调用 `ffmpeg` / `ffprobe`。其他模块需要媒体处理时,必须调用 `media/` 暴露的函数。
 
-`media/` 不负责缓存、不拼接缓存路径、不写 stage 产物 JSON。调用方提供输入路径和输出路径;调用方决定产物放哪里、是否写 index、是否进入缓存。
+`media/` 不负责目录扫描、缓存、拼接缓存路径或写 stage 产物 JSON。调用方先把输入目录展开为单个媒体文件,再提供输入路径和输出路径;调用方决定产物放哪里、是否写 index、是否进入缓存。
 
 ---
 
@@ -44,6 +44,8 @@ ffmpeg / ffprobe 是外部进程,错误形态复杂。集中在 `media/` 可以�
 - 抽取 wav
 - 按 fps 抽帧
 - 创建或解析 `--head-minutes` 开头裁剪文件
+
+目录递归扫描属于 CLI 输入解析,不属于 `media/` API。
 
 禁止新增形态:
 
@@ -125,6 +127,7 @@ def has_video_stream(input_path: Path) -> bool: ...
 - 缺少 video stream 时 `video=None`
 - 输入文件不存在时不做额外预检,让 ffmpeg / ffprobe 失败并包装为 `MediaError`
 - ffprobe JSON 解析失败包装为 `MediaError`
+- 调用方必须先把目录输入展开为单个媒体文件,不能把目录直接传给 `probe_media()`
 
 ### 3.2 `audio.py`
 

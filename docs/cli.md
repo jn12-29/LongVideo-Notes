@@ -12,9 +12,9 @@ CLI 提供四类入口:
 
 | 类型 | 命令 | 用途 |
 |---|---|---|
-| 端到端运行 | `lvnotes run <input-file>` | 默认纯音频模式,跑音频管线 + 合并阶段 |
-| 端到端多模 | `lvnotes run <input-file> --mm` | 显式启用多模 |
-| 查看产物 | `lvnotes inspect <namespace> <stage> <input-file>` | 查看中间产物摘要或路径 |
+| 端到端运行 | `lvnotes run <input-path>` | 默认纯音频模式,跑音频管线 + 合并阶段 |
+| 端到端多模 | `lvnotes run <input-path> --mm` | 显式启用多模 |
+| 查看产物 | `lvnotes inspect <namespace> <stage> <input-path>` | 查看中间产物摘要或路径 |
 | 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `sample` / `filter` / `semantic-filter` / `align` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
 
 CLI 的职责:
@@ -49,6 +49,8 @@ CLI 的非职责:
 - 输入是音频文件:强制纯音频模式
 - 输入是视频文件且未传 `--mm`:纯音频模式
 - 输入是视频文件且显式传 `--mm`:多模模式
+- 输入是目录:递归扫描目录下的媒体文件,逐个文件独立判定模式
+- 目录输入显式传 `--mm`:视频文件走多模,音频文件自动走纯音频
 - 配置只提供各 stage 参数,不提供模式启停
 
 ### 2.2 `--debug` 只属于 refine 开发期调试
@@ -58,7 +60,7 @@ CLI 的非职责:
 规则:
 
 - 默认关闭
-- 只在 `lvnotes refine <input-file> --debug` 或端到端调试 refine 时生效
+- 只在 `lvnotes refine <input-path> --debug` 或端到端调试 refine 时生效
 - 不写入 `core/config.py`
 - 不进入业务 schema
 
@@ -101,12 +103,13 @@ stage_module.run(ctx)
 端到端入口:
 
 ```bash
-lvnotes run <input-file>
-lvnotes run <input-file> --mm
-lvnotes run <input-file> --head-minutes 10
-lvnotes run <input-file> --config config.yaml
-lvnotes run <input-file> --no-cache
-lvnotes run <input-file> --debug
+lvnotes run <input-path>
+lvnotes run <input-path> --mm
+lvnotes run ./courses --mm
+lvnotes run <input-path> --head-minutes 10
+lvnotes run <input-path> --config config.yaml
+lvnotes run <input-path> --no-cache
+lvnotes run <input-path> --debug
 ```
 
 默认纯音频行为:
@@ -125,7 +128,7 @@ visual: sample  → filter → semantic-filter ─────────┘
 
 `align` 和 `describe` 必须等 `AudioArtifacts.is_complete() == True`。`align` 将 `semantic_sample.json` 中的图片按 timestamp 映射到 refined text segments；`describe` 使用对应 refined segment 的文本作为图像理解上下文。
 
-`--head-minutes <minutes>` 会先在输入文件同目录生成或复用开头片段文件,再将该片段作为本次运行的输入。片段文件名为 `<source-stem>.head-<minutes>m<source-suffix>`,例如 `lecture.mp4 --head-minutes 10` 对应 `lecture.head-10m.mp4`。后续 `PipelineContext.source_path`、输入 hash、缓存目录、输出 Markdown 名称和所有 stage 输入都基于该片段文件。
+`--head-minutes <minutes>` 会先在每个媒体文件同目录生成或复用开头片段文件,再将该片段作为本次运行的输入。片段文件名为 `<source-stem>.head-<minutes>m<source-suffix>`,例如 `lecture.mp4 --head-minutes 10` 对应 `lecture.head-10m.mp4`。后续 `PipelineContext.source_path`、输入 hash、缓存目录、输出 Markdown 名称和所有 stage 输入都基于该片段文件。目录扫描会跳过已存在的 `*.head-<minutes>m.*` 裁剪文件,避免重复处理。
 
 `run --help` 必须说明端到端主要产物:音频中间产物、合并中间产物、最终 latest Markdown、带时间戳归档 Markdown 与 cache debug copy。`run --help` 的多模说明还必须列出视觉帧目录与视觉 JSON 产物。
 
@@ -136,11 +139,11 @@ visual: sample  → filter → semantic-filter ─────────┘
 建议命令:
 
 ```bash
-lvnotes inspect audio refined <input-file>
-lvnotes inspect visual describe <input-file>
-lvnotes inspect merge outline <input-file>
-lvnotes inspect merge note <input-file> --paths
-lvnotes inspect merge note <input-file> --head-minutes 10 --paths
+lvnotes inspect audio refined <input-path>
+lvnotes inspect visual describe <input-path>
+lvnotes inspect merge outline <input-path>
+lvnotes inspect merge note <input-path> --paths
+lvnotes inspect merge note <input-path> --head-minutes 10 --paths
 ```
 
 支持选项:
@@ -149,6 +152,8 @@ lvnotes inspect merge note <input-file> --head-minutes 10 --paths
 - `--paths`:只输出对应产物路径
 - `--head-minutes <minutes>`:查看已存在开头片段对应的产物;不会创建片段文件
 
+单文件输入时 `--json` 保持输出原始产物内容。目录输入时 `--json` 输出一个 JSON object,包含每个媒体文件的 `source`、`path`、`content` 和失败列表,避免拼接多个顶层 JSON 文档。目录输入时 `--paths` 每行输出 `<source>\t<artifact-path>`。
+
 默认输出摘要,不打印长正文。
 
 `inspect --help` 必须明确 `inspect` 不生成文件,不创建 cache/output 目录,只读取已有 artifact,并列出可读取的 audio / visual / merge artifact 名称。
@@ -156,18 +161,18 @@ lvnotes inspect merge note <input-file> --head-minutes 10 --paths
 ### 3.3 音频 stage 子命令
 
 ```bash
-lvnotes extract <input-file>
-lvnotes transcribe <input-file>
-lvnotes segment <input-file>
-lvnotes refine <input-file>
-lvnotes refine <input-file> --head-minutes 10
-lvnotes refine <input-file> --debug
-lvnotes refine <input-file> --no-cache
+lvnotes extract <input-path>
+lvnotes transcribe <input-path>
+lvnotes segment <input-path>
+lvnotes refine <input-path>
+lvnotes refine <input-path> --head-minutes 10
+lvnotes refine <input-path> --debug
+lvnotes refine <input-path> --no-cache
 ```
 
 | 命令 | 调用 stage | 依赖 |
 |---|---|---|
-| `extract` | `audio_pipeline.extract.run(ctx)` | 输入文件 |
+| `extract` | `audio_pipeline.extract.run(ctx)` | 输入媒体文件 |
 | `transcribe` | `audio_pipeline.transcribe.run(ctx)` | extract 产物 |
 | `segment` | `audio_pipeline.segment.run(ctx)` | transcript 产物 |
 | `refine` | `audio_pipeline.refine.run(ctx)` | transcript + segments |
@@ -189,22 +194,22 @@ lvnotes refine <input-file> --no-cache
 4. 重新加载第一段产物
 5. 继续后续段
 
-`run --debug` 只影响端到端运行中的 refine stage,语义与 `lvnotes refine <input-file> --debug` 相同。其他 stage 忽略该开关。
+`run --debug` 只影响端到端运行中的 refine stage,语义与 `lvnotes refine <input-path> --debug` 相同。其他 stage 忽略该开关。
 
 ### 3.4 多模 stage 子命令
 
 ```bash
-lvnotes sample <input-file> --mm
-lvnotes sample <input-file> --mm --head-minutes 10
-lvnotes filter <input-file> --mm
-lvnotes semantic-filter <input-file> --mm
-lvnotes align <input-file> --mm
-lvnotes describe <input-file> --mm
+lvnotes sample <input-path> --mm
+lvnotes sample <input-path> --mm --head-minutes 10
+lvnotes filter <input-path> --mm
+lvnotes semantic-filter <input-path> --mm
+lvnotes align <input-path> --mm
+lvnotes describe <input-path> --mm
 ```
 
 | 命令 | 调用 stage | 依赖 |
 |---|---|---|
-| `sample` | `visual_pipeline.sample.run(ctx)` | 视频输入 + `--mm` |
+| `sample` | `visual_pipeline.sample.run(ctx)` | 视频媒体文件 + `--mm` |
 | `filter` | `visual_pipeline.filter.run(ctx)` | sample 产物 |
 | `semantic-filter` | `visual_pipeline.semantic_filter.run(ctx)` | filter 产物 |
 | `align` | `visual_pipeline.align.run(ctx)` | semantic-filter 产物 + audio refined |
@@ -225,17 +230,17 @@ lvnotes describe <input-file> --mm
 ### 3.5 合并 stage 子命令
 
 ```bash
-lvnotes unify <input-file>
-lvnotes unify <input-file> --mm
-lvnotes unify <input-file> --head-minutes 10
-lvnotes outline <input-file>
-lvnotes outline <input-file> --mm
-lvnotes section <input-file>
-lvnotes section <input-file> --mm
-lvnotes section <input-file> --no-cache
-lvnotes assemble <input-file>
-lvnotes assemble <input-file> --mm
-lvnotes assemble <input-file> --no-cache
+lvnotes unify <input-path>
+lvnotes unify <input-path> --mm
+lvnotes unify <input-path> --head-minutes 10
+lvnotes outline <input-path>
+lvnotes outline <input-path> --mm
+lvnotes section <input-path>
+lvnotes section <input-path> --mm
+lvnotes section <input-path> --no-cache
+lvnotes assemble <input-path>
+lvnotes assemble <input-path> --mm
+lvnotes assemble <input-path> --no-cache
 ```
 
 | 命令 | 调用 stage | 依赖 |
@@ -252,9 +257,9 @@ lvnotes assemble <input-file> --no-cache
 | `unify` | `cache/{input_hash}/content_blocks.json` |
 | `outline` | `cache/{input_hash}/outline.json` |
 | `section` | `cache/{input_hash}/sections/{chapter_id:03d}.md` |
-| `assemble` | `output_dir/<source-stem>.md`, `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md`, `cache/{input_hash}/note.md` |
+| `assemble` | `output_dir/<relative-dir>/<source-stem>.md`, `output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md`, `cache/{input_hash}/note.md` |
 
-合并 stage 命令的 `--mm` 语义与 `run --mm` 一致:视频输入且显式传 `--mm` 时创建带 `VisualArtifacts` 的 context;未传 `--mm` 时按纯音频模式创建 context。音频输入传 `--mm` 仍报错。这样 assemble frontmatter 的 `mode` 始终来自本次 CLI 模式。
+合并 stage 命令的 `--mm` 语义与 `run --mm` 一致:视频文件且显式传 `--mm` 时创建带 `VisualArtifacts` 的 context;未传 `--mm` 时按纯音频模式创建 context。音频文件传 `--mm` 时仍走纯音频。这样 assemble frontmatter 的 `mode` 始终来自本次 CLI 模式。
 
 `assemble --no-cache` 用于用户编辑 `sections/*.md` 后,跳过 assemble 缓存,重读 sections 并重新生成 latest 与带时间戳归档笔记。不应重跑 section LLM。
 
@@ -262,28 +267,49 @@ lvnotes assemble <input-file> --no-cache
 
 ## 4. Mode Rules
 
-### 4.1 输入类型判断
+### 4.1 输入路径解析
+
+CLI 参数 `<input-path>` 可以是单个媒体文件或目录。目录输入的规则:
+
+- 递归扫描所有子目录
+- 跳过隐藏文件和隐藏目录
+- 跳过已生成的 `*.head-<minutes>m.*` 裁剪文件
+- 只把支持扩展名的本地音视频文件纳入候选
+- 候选文件按相对路径字典序稳定处理
+- 不跟随 symlink 目录
+- 没有找到媒体文件时报错
+
+支持扩展名用于目录扫描过滤。真正能否处理仍以 `media/probe.py` 识别到的 stream 为准。
+
+| 类型 | 扩展名 |
+|---|---|
+| 视频 | `.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`, `.m4v` |
+| 音频 | `.mp3`, `.wav`, `.m4a`, `.flac`, `.aac`, `.ogg`, `.opus` |
+
+目录输入下,每个媒体文件独立创建 `PipelineContext`、独立输入 hash、独立 cache lock、独立输出。单个文件失败后继续处理后续文件,最后打印汇总;只要有任一失败,命令最终返回非 0。
+
+目录输入的输出路径保留输入目录内的相对目录结构。例如 `lvnotes run courses` 处理 `courses/week1/lecture.mp4` 时,latest 输出为 `output_dir/week1/lecture.md`。
+
+### 4.2 输入类型判断
 
 CLI 通过 `media/probe.py` 识别输入是音频还是视频,不直接调用 ffprobe。
 
 | 输入 | `--mm` | 模式 |
 |---|---:|---|
 | 音频文件 | 否 | 纯音频 |
-| 音频文件 | 是 | 报错退出 |
+| 音频文件 | 是 | 纯音频 |
 | 视频文件 | 否 | 纯音频 |
 | 视频文件 | 是 | 多模 |
+| 目录中的音频文件 | 是 | 纯音频 |
+| 目录中的视频文件 | 是 | 多模 |
 
-推荐对“音频文件 + `--mm`”直接报错:
+`--mm` 只会让有 video stream 的输入进入多模;音频输入仍走纯音频。
 
-```text
---mm requires a video input; audio files always run in audio-only mode.
-```
-
-### 4.2 配置不参与模式启停
+### 4.3 配置不参与模式启停
 
 配置文件可以有 `visual_pipeline.*` 参数,但这不代表启用多模。只有 `--mm` 启用多模。
 
-### 4.3 模式写入最终元信息
+### 4.4 模式写入最终元信息
 
 `assemble` 生成最终 Markdown frontmatter 时写入:
 
@@ -299,12 +325,12 @@ mode: multimodal
 
 该值来自 CLI 本次运行模式,不来自配置文件。
 
-### 4.4 `--head-minutes` 输入裁剪
+### 4.5 `--head-minutes` 输入裁剪
 
 `--head-minutes <minutes>` 支持视频和音频输入。CLI 在创建 `PipelineContext` 前处理该参数:
 
-1. 解析原始输入路径
-2. 在原始输入同目录定位 `<source-stem>.head-<minutes>m<source-suffix>`
+1. 解析原始输入路径,目录输入先展开为媒体文件列表
+2. 在每个原始媒体文件同目录定位 `<source-stem>.head-<minutes>m<source-suffix>`
 3. `run` 和 stage 命令在片段不存在时创建片段,片段已存在时默认复用
 4. `inspect` 只使用已存在片段,片段不存在时报错
 5. 对片段执行媒体探测、输入 hash、路径构建和模式判断
@@ -423,7 +449,7 @@ refine 的断点续跑只在 cache key 未变且没有 `--no-cache` 时使用已
 
 section 的 `--no-cache` 语义与 per-chapter cache 一致:跳过每章 manifest 命中判断,重新生成所有章节并覆盖 `sections/{chapter_id:03d}.md`;用户只想基于手工编辑的 sections 重新合成时应运行 `assemble --no-cache`,不要运行 `section --no-cache`。
 
-写入型命令包括 `run` 与所有 stage 子命令。CLI 在执行这些命令前对 `cache/{input_hash}/.lvnotes.lock` 获取独占锁;同一 cache root 下相同内容输入的写入型命令会串行执行。锁默认阻塞等待释放。`inspect` 不加锁、不创建 cache/output 目录,只读取已有产物。`--head-minutes` 创建裁剪文件时使用裁剪输出旁的隐藏锁文件保护,锁基于实际处理的裁剪文件计算后续 `input_hash`。
+写入型命令包括 `run` 与所有 stage 子命令。CLI 在执行这些命令前对每个媒体文件对应的 `cache/{input_hash}/.lvnotes.lock` 获取独占锁;同一 cache root 下相同内容输入的写入型命令会串行执行。目录输入逐文件获取锁,不持有目录级写锁。锁默认阻塞等待释放。`inspect` 不加锁、不创建 cache/output 目录,只读取已有产物。`--head-minutes` 创建裁剪文件时使用裁剪输出旁的隐藏锁文件保护,锁基于实际处理的裁剪文件计算后续 `input_hash`。
 
 ---
 
@@ -437,6 +463,8 @@ section 的 `--no-cache` 语义与 per-chapter cache 一致:跳过每章 manifes
 - 失败是否因为上游缺产物
 
 `inspect` 不触发计算,不获取写锁,不创建目录。产物缺失时提示先运行对应 stage。
+
+目录输入时,`inspect` 对每个媒体文件只解析已有产物路径并读取已有文件。`--head-minutes` 只解析已存在裁剪文件,不会创建裁剪文件。默认摘要按文件分组输出;`--paths` 每行输出 `<source>\t<artifact-path>`;`--json` 输出包含 `items` 与 `failures` 的 JSON object。单文件输入的 `--json` 仍输出原始产物内容。
 
 默认输出示例:
 
@@ -472,6 +500,8 @@ output/lecture.md
 output/lecture-20260509-085423.md
 cache/abc123/note.md
 ```
+
+目录输入会在每个文件前显示当前 `Input` / `Mode` / `Cache`,结束后显示批处理汇总。单个文件失败会记录失败并继续处理后续文件。
 
 CLI 始终显示 stage 级 `running` / `done` / `cache hit`。可计数的长耗时任务使用 `tqdm` 进度条:ASR 按音频秒数近似推进,refine 按 segment 推进,visual describe 按 alignment 推进,merge section 按 chapter job 推进。非 TTY 输出禁用动态进度条,只保留普通状态行和日志。
 
@@ -513,8 +543,11 @@ CLI 顶层 catch 项目定义的可预期异常:
 | 场景 | 处理 |
 |---|---|
 | 输入文件不存在 | 清晰错误,非 0 退出 |
+| 输入目录不存在 | 清晰错误,非 0 退出 |
+| 输入目录没有支持的媒体文件 | 清晰错误,非 0 退出 |
+| 目录批处理中部分文件失败 | 继续处理后续文件,汇总失败,最终非 0 退出 |
 | 配置缺失或未知字段 | `ConfigError` |
-| `--mm` 用在音频文件 | CLI 参数错误 |
+| visual stage 输入不是视频文件 | CLI 参数错误 |
 | 未传 `--mm` 调用 visual stage | CLI 参数错误 |
 | `visual describe` 缺 audio refined | `CacheError`,提示先运行 refine |
 | LLM 限流 | 底层重试后仍失败则 `RateLimitError` |
@@ -584,8 +617,9 @@ CLI 验收覆盖：
 - 顶层 help 输出推荐工作流、模式规则、常用示例和常用选项。
 - 顶层 help 的 Commands 区按使用顺序展示 `run`、`inspect`、音频 stage、多模 stage、合并 stage,并为每个命令展示简短用途。
 - `run --help`、`inspect --help` 与每个 stage command 的 help 展示对应命令会生成或读取的主要产物。
-- `lvnotes run <input-file>` 走纯音频路径。
+- `lvnotes run <input-path>` 走纯音频路径。
 - `lvnotes run <video> --mm` 走多模路径。
+- 目录输入递归扫描媒体文件,保留相对输出目录,失败后继续处理并最终汇总。
 - 每个 stage 命令调用同名 stage 的 `run(ctx)`。
 - `inspect` 只读取产物，不触发计算。
 - `--no-cache`、`--debug`、`--mm` 的语义符合本文规则。
@@ -594,17 +628,19 @@ CLI 验收覆盖：
 
 ```text
 Recommended workflow:
-  lvnotes run <input-file>
-  lvnotes run <input-file> --mm
-  lvnotes run <input-file> --head-minutes 10
-  lvnotes inspect audio refined <input-file>
-  lvnotes inspect merge note <input-file> --paths
-  lvnotes inspect merge note <input-file> --head-minutes 10 --paths
-  lvnotes assemble <input-file> --no-cache
+  lvnotes run <input-path>
+  lvnotes run <input-path> --mm
+  lvnotes run ./courses --mm
+  lvnotes run <input-path> --head-minutes 10
+  lvnotes inspect audio refined <input-path>
+  lvnotes inspect merge note <input-path> --paths
+  lvnotes inspect merge note <input-path> --head-minutes 10 --paths
+  lvnotes assemble <input-path> --no-cache
 
 Modes:
   Audio files and video files without --mm run in audio-only mode.
   Video files with --mm run in multimodal mode.
+  Directory inputs process media files recursively; with --mm, videos are multimodal and audio remains audio-only.
 
 Useful options:
   --head-minutes N  Process only the first N minutes; inspect reads an existing trim.
@@ -622,6 +658,7 @@ Useful options:
 ```bash
 lvnotes run lecture.mp4
 lvnotes run lecture.mp4 --mm
+lvnotes run ./courses --mm
 lvnotes run lecture.mp4 --head-minutes 10
 
 lvnotes extract lecture.mp4

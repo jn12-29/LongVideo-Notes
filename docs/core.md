@@ -264,7 +264,7 @@ class PipelinePaths:
 建议工厂函数:
 
 ```python
-def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str) -> PipelinePaths: ...
+def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash: str, output_subdir: Path | None = None) -> PipelinePaths: ...
 def resolve_visual_raw_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
 def resolve_visual_filter_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
 def resolve_visual_semantic_image_path(paths: PipelinePaths, image_source_path: Path) -> Path: ...
@@ -282,7 +282,7 @@ def make_markdown_image_path(paths: PipelinePaths, image_source_path: Path) -> P
 - `run_dir == cache_dir / input_hash`,只存中间产物和 debug copy。
 - `debug_dir == cache/{input_hash}/debug`,存放失败诊断历史文件,不参与 stage cache manifest。
 - `cache_note_md == cache/{input_hash}/note.md`,是 assemble 生成的调试副本或缓存副本,不是最终用户产物。
-- `output_note_md == output_dir / "<source-stem>.md"`,是 latest 最终用户产物；assemble 同时写出 `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。
+- `output_note_md == output_dir / "<relative-dir>" / "<source-stem>.md"`,是 latest 最终用户产物；assemble 同时写出同目录下的 `<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。单文件输入时 `<relative-dir>` 为空;目录输入时保留输入目录内的相对目录结构。
 - raw 采样帧存放在 `visual_raw_frames_dir == cache/{input_hash}/visual/raw_frames/`。
 - 过滤后帧存放在 `visual_filter_frames_dir == cache/{input_hash}/visual/filter_frames/`。
 - filter 参数对比产物存放在 `visual_filter_variants_dir == cache/{input_hash}/visual/filter_variants/`。
@@ -396,7 +396,7 @@ Manifest 路径规则:
 - `visual_filter` stage 使用 `visual/filtered_sample.json.cache.json`,manifest.output_paths 包含 `visual/filtered_sample.json` 和过滤后帧文件列表。
 - `refine` stage 的最终 manifest 使用 `refined_transcript.json.cache.json`;段级 `refined/{seg_id:04d}.json` 是断点续跑产物,不单独表达 stage cache 命中。
 - `section` stage 使用 per-chapter manifest:`sections/{chapter_id:03d}.md.cache.json`。
-- `assemble` stage 使用 `cache/{input_hash}/note.md.cache.json`;`output_dir/<source-stem>.md` 和带时间戳归档文件是最终用户产物,不作为 manifest 位置。
+- `assemble` stage 使用 `cache/{input_hash}/note.md.cache.json`;latest Markdown 和带时间戳归档文件是最终用户产物,不作为 manifest 位置。
 
 命中规则:
 
@@ -820,7 +820,7 @@ refined = read_json(ctx.paths.refined_transcript_json)
 | `run_dir` | `cache/{input_hash}` |
 | `output_dir` | 最终用户产物目录 |
 | `cache_note_md` | `cache/{input_hash}/note.md`,调试或缓存副本 |
-| `output_note_md` | `output_dir/<source-stem>.md`,latest 最终用户产物 |
+| `output_note_md` | `output_dir/<relative-dir>/<source-stem>.md`,latest 最终用户产物 |
 | `visual_raw_frames_dir` | `cache/{input_hash}/visual/raw_frames/` |
 | `visual_filter_frames_dir` | `cache/{input_hash}/visual/filter_frames/` |
 | `visual_filter_variants_dir` | `cache/{input_hash}/visual/filter_variants/` |
@@ -860,14 +860,15 @@ cache/{input_hash}/
 └── note.md
 
 output_dir/
-├── <source-stem>.md
-└── <source-stem>-YYYYMMDD-HHMMSS.md
+└── <relative-dir>/
+    ├── <source-stem>.md
+    └── <source-stem>-YYYYMMDD-HHMMSS.md
 ```
 
 规则:
 
-- `output_dir/<source-stem>.md` 是 latest 最终用户产物。
-- `output_dir/<source-stem>-YYYYMMDD-HHMMSS.md` 是每次 assemble 写出的归档用户产物。
+- `output_dir/<relative-dir>/<source-stem>.md` 是 latest 最终用户产物。单文件输入时 `<relative-dir>` 为空;目录输入时保留输入目录内的相对目录结构。
+- `output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md` 是每次 assemble 写出的归档用户产物。
 - `cache/{input_hash}/note.md` 只作为中间产物或 debug copy 存在。
 - `cache/{input_hash}/.lvnotes.lock` 是写入型 CLI 命令的独占锁文件,不进入 cache key、manifest 或业务产物列表。
 - `cache/{input_hash}/debug/` 存放失败诊断历史文件,不参与 cache hit 判定。

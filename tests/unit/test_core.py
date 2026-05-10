@@ -86,6 +86,13 @@ def test_build_paths_uses_source_named_output_note() -> None:
     assert make_timestamped_output_path(paths.output_note_md, "20260509-085423") == Path("output/20260420-金涌院士报告前10分钟音频-20260509-085423.md")
 
 
+def test_build_paths_can_preserve_directory_input_relative_output_parent() -> None:
+    paths = build_paths(Path("/tmp/course/week1/lecture.mp4"), Path("cache"), Path("output"), "abc", output_subdir=Path("week1"))
+
+    assert paths.output_note_md == Path("output/week1/lecture.md")
+    assert make_timestamped_output_path(paths.output_note_md, "20260509-085423") == Path("output/week1/lecture-20260509-085423.md")
+
+
 def test_unify_ignores_visual_artifacts_in_audio_only_mode(tmp_path: Path) -> None:
     ctx = _unify_ctx(tmp_path, "audio_only", visual=type("Visual", (), {"get_descriptions": lambda self: (_ for _ in ()).throw(AssertionError("should not read visual"))})())
 
