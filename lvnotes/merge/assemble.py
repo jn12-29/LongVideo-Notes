@@ -57,7 +57,7 @@ def _assemble_note(ctx: PipelineContext, outline, blocks, section_paths: list, g
     for chapter, path in zip(outline.chapters, section_paths):
         text = path.read_text(encoding="utf-8")
         text = _strip_section_heading(text, chapter.title)
-        text = _render_refs(text, block_to_chapter, anchors, current_chapter_id=chapter.id)
+        text = _render_refs(text, block_to_chapter, anchors)
         text = _render_timestamps(ctx, text)
         text = _normalize_markdown_spacing(text)
         parts.append(f"## {chapter.title}\n{text.strip()}\n")
@@ -111,15 +111,13 @@ def _filename_timestamp(generated_at: datetime) -> str:
     return generated_at.astimezone().strftime("%Y%m%d-%H%M%S")
 
 
-def _render_refs(text: str, block_to_chapter: dict[int, int], anchors: dict[int, str], *, current_chapter_id: int | None = None) -> str:
+def _render_refs(text: str, block_to_chapter: dict[int, int], anchors: dict[int, str]) -> str:
     def replace(match: re.Match[str]) -> str:
         block_id = int(match.group(1))
         chapter_id = block_to_chapter.get(block_id)
         if chapter_id is None:
             log.warning("assemble: cross_ref §%s not resolvable, rendered as plain text", block_id + 1)
             return f"§{block_id + 1}"
-        if chapter_id == current_chapter_id:
-            return ""
         return f"[§{block_id + 1}](#{anchors[chapter_id]})"
 
     return _REF_RE.sub(replace, text)

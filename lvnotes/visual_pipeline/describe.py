@@ -26,7 +26,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     alignments = read_alignments(ctx.paths.visual_alignments_json)
     refined = ctx.artifacts.audio.get_refined()
     segment_by_id = {segment.id: segment for segment in refined.segments}
-    audio_texts = [segment_by_id[alignment.segment_id].cleaned_text for alignment in alignments]
+    audio_texts = [_audio_text_for_alignment(ctx, segment_by_id[alignment.segment_id]) for alignment in alignments]
     template = prompt_path("describe.jinja")
     alignments_hash = hash_json(alignments)
     audio_hash = hash_json(audio_texts)
@@ -85,6 +85,10 @@ def _describe_one(ctx: PipelineContext, template: Path, segment_by_id: dict[int,
         medium=alignment.medium,
         description=result.description,
     )
+
+
+def _audio_text_for_alignment(ctx: PipelineContext, segment: RefinedSegment) -> str:
+    return ctx.artifacts.audio.get_text_at(segment.start, segment.end, strip_refs=True)
 
 
 def _has_description_content(description: str) -> bool:

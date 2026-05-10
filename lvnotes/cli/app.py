@@ -84,8 +84,8 @@ STAGE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "outline": ("cache/{input_hash}/outline.json",),
     "section": ("cache/{input_hash}/sections/{chapter_id:03d}.md",),
     "assemble": (
-        "output_dir/<source-stem>.md",
-        "output_dir/<source-stem>-YYYYMMDD-HHMMSS.md",
+        "output_dir/<relative-dir>/<source-stem>.md",
+        "output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md",
         "cache/{input_hash}/note.md",
     ),
 }
@@ -109,7 +109,7 @@ def main() -> None:
     Modes:
       Audio files and video files without --mm run in audio-only mode.
       Video files with --mm run in multimodal mode.
-      Directory inputs process media files recursively.
+      Directory inputs process media files recursively; with --mm, videos run in multimodal mode and audio files remain audio-only.
 
     \b
     Useful options:
@@ -137,7 +137,7 @@ def main() -> None:
 def run_command(input_path: Path, config_path: Path | None, mm: bool, head_minutes: float | None, no_cache: bool, debug: bool) -> None:
     """Generate a Markdown note end to end.
 
-    Use --mm for multimodal video runs. Directory inputs are processed recursively.
+    Use --mm for multimodal video runs. Directory inputs are processed recursively; with --mm, videos run in multimodal mode and audio files remain audio-only.
     Use --head-minutes N for a quick trial on the first N minutes. Use --no-cache
     to recompute all stages run by run.
 
@@ -146,7 +146,7 @@ def run_command(input_path: Path, config_path: Path | None, mm: bool, head_minut
       cache/{input_hash}/audio/audio.wav and audio/extract.json
       cache/{input_hash}/transcript_raw.json, segments.json, refined_transcript.json
       cache/{input_hash}/content_blocks.json, outline.json, sections/{chapter_id:03d}.md
-      output_dir/<source-stem>.md and output_dir/<source-stem>-YYYYMMDD-HHMMSS.md
+      output_dir/<relative-dir>/<source-stem>.md and output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md
       cache/{input_hash}/note.md
 
     \b

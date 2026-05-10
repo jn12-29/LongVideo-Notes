@@ -246,7 +246,7 @@ use_batched = config.use_batched and resolved_device == "cuda"
 5. `words` 按时间排序
 6. word 缺少 probability 时按后端能力处理;完全不支持时后续 API 后端可返回空列表
 7. `language` 优先来自 faster-whisper info,否则用配置值
-8. `duration` 来自 faster-whisper info;若不可用,由 transcribe stage 用 `AudioExtractResult.duration` 做一致性校验
+8. `duration` 来自 faster-whisper info;若不可用,由 transcribe stage 决定是否使用音频元信息兜底
 
 `asr/` 不做:
 

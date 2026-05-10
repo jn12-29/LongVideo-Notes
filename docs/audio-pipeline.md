@@ -104,7 +104,7 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 **错误处理**:
 - 输入文件不存在:不在 stage 内做额外预检,由 `media/` 调 ffmpeg / ffprobe 后包装为 `MediaError`
 - ffmpeg 调用失败:`media/` 内部包装为 `MediaError` 上抛
-- 输出 wav 校验:抽完后断言文件存在 + 时长与 probe 结果在 ±100ms 内一致;断言失败抛 `MediaError`
+- 输出 wav 必须可被 `ffprobe` 读取;`AudioExtractResult.duration` 记录抽取后 wav 的 probe duration
 
 ### 3.2 Stage 2: transcribe
 
@@ -260,7 +260,7 @@ class TranscriptSegment:
 class Transcript:
     segments: list[TranscriptSegment]
     language: str                   # ISO 639-1,如 "zh" / "en"
-    duration: float                 # 与 AudioExtractResult.duration 一致
+    duration: float                 # ASR 后端报告或 transcribe stage 规范化后的秒数
 
 @dataclass(frozen=True)
 class SegmentMarker:
@@ -300,7 +300,7 @@ class RefinedTranscript:
 3. 所有时间戳 `float` 秒、精度毫秒
 4. 同一管线内 `SegmentMarker.id` 与 `RefinedSegment.id` 共享 namespace(同值对应同段)
 5. `RefinedSegment.cross_refs` 中每个值都 `< self.id` 且对应到存在的 `RefinedSegment.id`;`cleaned_text` 内出现的所有 `[[REF:N]]` 标记 N 必须出现在 `cross_refs` 中(双向一致)
-6. `Transcript.duration == AudioExtractResult.duration == RefinedTranscript.duration`(容差 ±100ms)
+6. `duration` 字段记录对应阶段产物报告的秒数;下游不依赖跨 stage duration 完全一致
 
 LLM 输出导致的业务级不变量违反抛 `LLMError`,触发上层重试或中止。内部构造出的不可能状态才直接抛 `AssertionError`。
 
@@ -478,7 +478,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 按 `coding-standards.md` §19.2 的硬性清单:
 
-1. 主路径用真实输入跑通端到端(`tests/fixtures/` 下的 30 秒音频片段,由 `prepare.py` 生成)
+1. 主路径用短音频输入跑通端到端
 2. 缓存机制工作(再跑一次能命中缓存,跳过该 stage 的实际计算)
 3. 错误路径有测试覆盖(至少 1 个错误输入 → 抛预期异常的测试)
 4. 类型检查通过(`pyright` 或 `mypy --strict`),`import-linter` 通过

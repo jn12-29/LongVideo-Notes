@@ -183,16 +183,21 @@ def test_assemble_strips_generated_section_heading() -> None:
     assert _strip_section_heading("#### 更细小标题\n正文", "章节标题") == "#### 更细小标题\n正文"
 
 
-def test_render_refs_drops_current_chapter_self_refs() -> None:
+def test_render_refs_links_current_chapter_refs() -> None:
     text = "当前 [[REF:2]]，前文 [[REF:0]]。"
     rendered = _render_refs(
         text,
         {0: 1, 2: 2},
         {1: "chapter-1-a", 2: "chapter-2-b"},
-        current_chapter_id=2,
     )
 
-    assert rendered == "当前 ，前文 [§1](#chapter-1-a)。"
+    assert rendered == "当前 [§3](#chapter-2-b)，前文 [§1](#chapter-1-a)。"
+
+
+def test_render_refs_falls_back_to_plain_text_for_unknown_blocks() -> None:
+    rendered = _render_refs("未知 [[REF:99]]。", {}, {})
+
+    assert rendered == "未知 §100。"
 
 
 def test_normalize_markdown_spacing_cleans_ref_and_timestamp_spacing() -> None:

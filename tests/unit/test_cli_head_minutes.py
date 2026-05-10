@@ -51,7 +51,7 @@ def test_make_context_inspect_resolves_existing_trim_without_creating(monkeypatc
     monkeypatch.setattr(app, "load_config", lambda config_path: _config(tmp_path))
     monkeypatch.setattr(app, "trim_media_head", lambda path, minutes: created.append(path) or trimmed)
     monkeypatch.setattr(app, "resolve_head_trim_path", lambda path, minutes: resolved.append(path) or trimmed)
-    monkeypatch.setattr(app, "probe_media", lambda path: SimpleNamespace(audio=object(), video=None))
+    monkeypatch.setattr(app, "probe_media", lambda path: SimpleNamespace(audio=object(), video=object() if path == source.resolve() else None))
     monkeypatch.setattr(app, "hash_file", lambda path: "trimhash")
     monkeypatch.setattr(app, "build_paths", lambda source_path, cache_dir, output_dir, input_hash, output_subdir=None: _paths(tmp_path, source_path))
 

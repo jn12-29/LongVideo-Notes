@@ -333,15 +333,18 @@ Python 标准库:
 1. 实现 `probe.py`
 2. 实现 `audio.py`
 3. 实现 `video.py`
-4. 为三类公开函数补单元测试
-5. 接入 `audio_pipeline/extract.py`
-6. 接入 `visual_pipeline/sample.py`
+4. 实现 `trim.py`
+5. 为公开函数补单元测试
+6. 接入 `audio_pipeline/extract.py`
+7. 接入 `visual_pipeline/sample.py`
+8. 接入 CLI `--head-minutes`
 
 验收标准:
 
 1. `probe_media()` 能读取真实 30 秒音频和视频 fixture
 2. `extract_wav()` 能抽出符合采样率与声道参数的 wav
 3. `extract_frames()` 能按 fps 生成帧
-4. ffmpeg / ffprobe 失败路径有测试覆盖
-5. 非 `media/` 模块没有 `subprocess` 调 ffmpeg / ffprobe
-6. 类型检查通过,公开函数无 `Any`
+4. `trim_media_head()` 能创建或复用开头裁剪文件,`resolve_head_trim_path()` 只解析已有裁剪文件
+5. ffmpeg / ffprobe 失败路径有测试覆盖
+6. 非 `media/` 模块没有 `subprocess` 调 ffmpeg / ffprobe
+7. 类型检查通过,公开函数无 `Any`

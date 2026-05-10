@@ -156,8 +156,12 @@ longvideo-notes/
 │   │   ├── slugs.py             (slug / chapter anchor 唯一来源)
 │   │   ├── pipeline.py          (Stage 抽象 + StageOutput)
 │   │   ├── cache.py             (内容寻址缓存 + atomic_write_* + hash_prompt_template)
+│   │   ├── serialization.py     (JSON 序列化 / 反序列化)
 │   │   ├── config.py            (pydantic-settings 配置加载,含封闭任务名集合)
 │   │   ├── context.py           (PipelineContext)
+│   │   ├── parallel.py          (有界并发 helper)
+│   │   ├── progress.py          (进度输出 helper)
+│   │   ├── transcript.py        (转录文本按时间切片)
 │   │   ├── exceptions.py
 │   │   ├── constants.py
 │   │   └── logging.py           (logger 配置)
@@ -177,6 +181,9 @@ longvideo-notes/
 │   │   ├── openai_compatible_chat.py
 │   │   ├── factory.py
 │   │   ├── json_helper.py       (complete_json:LLM JSON 解析 + 1 次修复重试)
+│   │   ├── text_helper.py       (complete_text + 限流重试入口)
+│   │   ├── options.py           (reasoning / thinking 请求选项合并)
+│   │   ├── rate_limit.py        (profile 级进程内限速)
 │   │   └── budget.py            (token / 成本预估)
 │   │
 │   ├── asr/                     (语音转录抽象 + 实现)
@@ -212,9 +219,6 @@ longvideo-notes/
 │       └── app.py               (typer/click 入口)
 │
 ├── tests/
-│   ├── fixtures/
-│   │   ├── prepare.py           (下载 + 转码生成本地 fixture)
-│   │   └── MANIFEST.txt         (来源 / license / SHA256)
 │   ├── unit/
 │   └── integration/
 │
@@ -355,7 +359,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
 
-**字段命名约定**:视觉相关 schema 使用 `frame_id` 表示原始 sampled frame namespace 中的帧编号,使用 `image_source_path` 表示相对当前视觉产物帧目录的图片源路径。`sample.json` 相对 `raw_frames/`;`filtered_sample.json` 相对 `filter_frames/`;`semantic_sample.json`、`alignments.json`、`descriptions.json` 相对 `semantic_frames/`。最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。合并阶段消费视觉信息时沿用这些字段语义,不再引入 `richest_frame`、`frame_path` 等同义字段。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
+**字段命名约定**:视觉相关 schema 使用 `frame_id` 表示原始 sampled frame namespace 中的帧编号,使用 `image_source_path` 表示相对当前视觉产物帧目录的图片源路径。`sample.json` 相对 `raw_frames/`;`filtered_sample.json` 相对 `filter_frames/`;`semantic_sample.json`、`alignments.json`、`descriptions.json` 相对 `semantic_frames/`。最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
 
 ### 5.7 `merge/` —— 合并与笔记生成
 

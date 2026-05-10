@@ -308,7 +308,7 @@ def test_describe_uses_configured_parallelism(monkeypatch, tmp_path: Path) -> No
         VisualAlignment(0, 2, 2.0, Path("000002.png"), "chart"),
     ]
     refined = RefinedTranscript([RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])], "zh", 10.0)
-    object.__setattr__(ctx.artifacts, "audio", SimpleNamespace(is_complete=lambda: True, get_refined=lambda: refined))
+    object.__setattr__(ctx.artifacts, "audio", SimpleNamespace(is_complete=lambda: True, get_refined=lambda: refined, get_text_at=lambda start, end, strip_refs=True: "正文"))
     object.__setattr__(ctx.config.visual_pipeline.describe, "concurrent_calls", 5)
     (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
     (ctx.paths.visual_semantic_frames_dir / "000002.png").write_bytes(b"frame")
@@ -330,6 +330,38 @@ def test_describe_uses_configured_parallelism(monkeypatch, tmp_path: Path) -> No
 
     assert output.metadata["item_count"] == 2
     assert calls == [("visual.describe", "alignment", 5, 2)]
+
+
+def test_describe_uses_ref_stripped_audio_context(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    alignments = [VisualAlignment(0, 1, 1.0, Path("000001.png"), "ppt")]
+    refined = RefinedTranscript([RefinedSegment(0, 0.0, 10.0, "主题", "正文 [[REF:0]]", "摘要", [0])], "zh", 10.0)
+    audio_calls = []
+
+    def get_text_at(start: float, end: float, strip_refs: bool = True):  # type: ignore[no-untyped-def]
+        audio_calls.append((start, end, strip_refs))
+        return "正文"
+
+    object.__setattr__(ctx.artifacts, "audio", SimpleNamespace(is_complete=lambda: True, get_refined=lambda: refined, get_text_at=get_text_at))
+    (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
+    template = tmp_path / "describe.jinja"
+    template.write_text("prompt", encoding="utf-8")
+    monkeypatch.setattr(describe, "read_alignments", lambda path: alignments)
+    monkeypatch.setattr(describe, "prompt_path", lambda name: template)
+    monkeypatch.setattr(describe, "hash_prompt_template", lambda path: "prompt")
+    monkeypatch.setattr(describe, "cached_output", lambda *args, **kwargs: None)
+    captured_items = []
+
+    def run_parallel(items, worker, *, desc: str, unit: str, max_workers: int):  # type: ignore[no-untyped-def]
+        captured_items.extend(items)
+        return [VisualDescription(item[0].segment_id, item[0].frame_id, 0.0, 10.0, item[0].image_source_path, item[0].medium, "中文描述") for item in items]
+
+    monkeypatch.setattr(describe, "run_parallel", run_parallel)
+
+    describe.run(ctx)
+
+    assert audio_calls == [(0.0, 10.0, True)]
+    assert captured_items == [(alignments[0], "正文")]
 
 
 def test_describe_rejects_punctuation_only_description() -> None:

@@ -411,13 +411,9 @@ def get_text_at(
 - 1 个正路径测试(典型输入 → 期望输出)
 - 1 个错误路径测试(边界 / 错误输入 → 正确报错)
 
-### 10.2 测试要用真实小数据
+### 10.2 测试要覆盖真实边界
 
-`tests/fixtures/` 下放真实小数据(30 秒音频片段、30 秒视频片段、若干真实但短的转录 JSON、若干关键帧图片)。测试用真实文件跑真实代码。
-
-**fixture 不 check-in 二进制**:`tests/fixtures/` 下只提交 `prepare.py` 脚本与 `MANIFEST.txt`(列出每份 fixture 的来源 URL、license、转码命令、SHA256)。CI 与本地首次运行测试前先跑 `python tests/fixtures/prepare.py` 下载并生成本地文件。来源限定 CC0 / Public Domain(Wikimedia Commons / Internet Archive 等)。
-
-单测可通过 `pytest --no-fixtures-required` 跳过依赖 fixture 的用例(用于离线 / 受限环境的 lint-only CI 任务)。
+测试应优先覆盖真实模块边界:文件读写、JSON 序列化、CLI 参数、缓存命中 / 失效、错误路径和外部工具包装边界。需要外部服务、GPU、大型媒体或网络下载的场景,用小型本地构造数据或 mock 外部 IO 保持单测稳定。
 
 ### 10.3 不要 mock 自己的代码
 
@@ -596,7 +592,7 @@ def test_baz():
 
 ### 17.1 测试要真实
 
-- 测试用真实小输入文件(`tests/fixtures/`,由 `prepare.py` 生成),不是凭空构造的"看起来像"的字符串
+- 测试输入应覆盖真实边界和不变量,不是凭空构造的"看起来像"的字符串
 - 测试断言要 specific:`assert len(segments) == 5` 优于 `assert len(segments) > 0`
 - 测试覆盖错误路径:传错参数、传空数据、传不存在的文件,验证抛出预期异常
 

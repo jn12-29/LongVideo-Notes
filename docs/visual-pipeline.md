@@ -130,7 +130,7 @@ variants:
 
 **职责**：用强 VLM 为每张 aligned semantic frame 生成结合对应 refined text segment 的详细视觉描述。
 
-**Input**：`alignments.json`、`visual/semantic_frames/` 与 `ctx.artifacts.audio.get_refined()`。
+**Input**：`alignments.json`、`visual/semantic_frames/`、`ctx.artifacts.audio.get_refined()` 与 `ctx.artifacts.audio.get_text_at(...)`。
 
 **Output**：`cache/{input_hash}/visual/descriptions.json`。
 
@@ -138,6 +138,7 @@ variants:
 
 - CLI 调度层保证启动前 `AudioArtifacts.is_complete() == True`，且已运行 `align`。
 - 图片从 `visual/semantic_frames/` 解析。
+- 传给 VLM 的 `audio_text` 通过 `AudioArtifacts.get_text_at(segment.start, segment.end, strip_refs=True)` 获取，避免把 `[[REF:N]]` 内部 marker 泄漏给 VLM。
 - `VisualDescription.frame_id`、`image_source_path`、`medium` 来自 `VisualAlignment`。
 - `VisualDescription.start/end` 使用对应 refined text segment 的 `start/end`。
 - LLM 调用通过 `for_task(ctx.config, "slide_describe")` 和 `complete_json(...)`。

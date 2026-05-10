@@ -30,9 +30,13 @@
 | `slugs.py` | Markdown anchor / slug 生成唯一入口 |
 | `pipeline.py` | stage 统一契约与 `StageOutput` |
 | `cache.py` | 内容 hash、原子写入、prompt 模板 hash |
+| `serialization.py` | dataclass / pydantic JSON 序列化与反序列化 |
 | `locks.py` | 输入 cache 与裁剪文件的 POSIX 文件锁 |
 | `config.py` | 配置 schema、加载、校验、封闭任务名集合 |
 | `context.py` | `PipelineContext` 运行上下文 |
+| `parallel.py` | 有界并发执行 helper |
+| `progress.py` | CLI / stage 进度输出 helper |
+| `transcript.py` | 转录文本按时间切片 |
 | `exceptions.py` | 项目异常层次 |
 | `constants.py` | 真正跨模块的常量 |
 | `logging.py` | logging 初始化 |
@@ -929,9 +933,13 @@ lvnotes/core/
 ├── slugs.py
 ├── pipeline.py
 ├── cache.py
+├── serialization.py
 ├── locks.py
 ├── config.py
 ├── context.py
+├── parallel.py
+├── progress.py
+├── transcript.py
 ├── exceptions.py
 ├── constants.py
 └── logging.py

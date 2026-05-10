@@ -15,6 +15,7 @@ def test_top_level_help_guides_common_workflow() -> None:
     assert "lvnotes run <input-path> --head-minutes 10" in result.output
     assert "audio-only mode" in result.output
     assert "multimodal mode" in result.output
+    assert "with --mm, videos run in multimodal mode and audio files remain audio-only" in result.output
     assert "lvnotes inspect merge note <input-path> --paths" in result.output
     assert "lvnotes inspect merge note <input-path> --head-minutes 10 --paths" in result.output
 
@@ -59,9 +60,11 @@ def test_run_help_mentions_common_run_options() -> None:
 
     assert result.exit_code == 0
     assert "Use --mm for multimodal video runs." in result.output
+    assert "with --mm, videos run in multimodal mode" in result.output
+    assert "audio files remain" in result.output
     assert "Use --head-minutes N for a quick trial" in result.output
     assert "--head-minutes FLOAT RANGE" in result.output
-    assert "Use --no-cache to recompute all stages run by run." in result.output
+    assert "--no-cache to recompute" in result.output
 
 
 def test_run_help_lists_end_to_end_outputs() -> None:
@@ -69,7 +72,7 @@ def test_run_help_lists_end_to_end_outputs() -> None:
 
     assert result.exit_code == 0
     assert "Audio-only outputs:" in result.output
-    assert "output_dir/<source-stem>.md" in result.output
+    assert "output_dir/<relative-dir>/<source-stem>.md" in result.output
     assert "YYYYMMDD-HHMMSS.md" in result.output
     assert "cache/{input_hash}/note.md" in result.output
     assert "Multimodal extras with --mm:" in result.output
@@ -130,7 +133,8 @@ def test_stage_help_mentions_head_minutes_and_no_cache() -> None:
         (
             "assemble",
             (
-                "output_dir/<source-stem>.md",
+                "output_dir/<relative-dir>/<source-stem>.md",
+                "output_dir/<relative-dir>/<source-stem>-YYYYMMDD-HHMMSS.md",
                 "YYYYMMDD-HHMMSS.md",
                 "cache/{input_hash}/note.md",
             ),

@@ -333,7 +333,7 @@ def _cached_refined_outputs_valid(ctx: PipelineContext, transcript: Transcript, 
 
 
 def _validate_refined_transcript(result: RefinedTranscript, transcript: Transcript, markers: list[SegmentMarker]) -> None:
-    if result.language != transcript.language or abs(result.duration - transcript.duration) > 0.2:
+    if result.language != transcript.language:
         raise LLMError("refine invariant failed: transcript metadata mismatch")
     _validate_refined_segments(result.segments, markers)
 

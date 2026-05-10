@@ -586,6 +586,8 @@ lvnotes/llm/
 ├── factory.py
 ├── text_helper.py
 ├── json_helper.py
+├── options.py
+├── rate_limit.py
 └── budget.py
 ```
 

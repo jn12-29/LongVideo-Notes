@@ -319,6 +319,14 @@ def test_validate_refined_transcript_rejects_missing_segment() -> None:
         refine._validate_refined_transcript(result, transcript, segments.markers)
 
 
+def test_validate_refined_transcript_allows_duration_metadata_drift() -> None:
+    transcript = _transcript()
+    segments = _segments()
+    result = RefinedTranscript(segments=[_refined(0), _refined(1)], language="zh", duration=0.0)
+
+    refine._validate_refined_transcript(result, transcript, segments.markers)
+
+
 def test_refined_segment_list_serialization_round_trip() -> None:
     from lvnotes.core.schemas import RefinedSegmentList
 
