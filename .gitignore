@@ -5,6 +5,6 @@ __pycache__
 *.py[cod]
 cache/
 output/
-config.yaml
+# config.yaml
 .venv
 /videos

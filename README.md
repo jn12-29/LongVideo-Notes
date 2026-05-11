@@ -15,17 +15,45 @@
 
 ## 使用
 
-安装开发依赖后，可通过模块入口或 console script 运行：
+### 安装环境
+
+推荐使用 `uv` 管理 Python 环境。项目依赖声明在 `pyproject.toml` 中，要求 Python `>=3.11`。
+
+如果本机尚未安装 `uv`，先安装：
 
 ```bash
-python -m lvnotes --help
-lvnotes run <input-path>
-lvnotes run <input-path> --mm
-lvnotes run ./courses --mm
-lvnotes run <input-path> --head-minutes 10
-lvnotes inspect audio refined <input-path>
-lvnotes inspect merge note <input-path> --paths
-lvnotes assemble <input-path> --no-cache
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+在项目根目录同步环境：
+
+```bash
+uv sync
+```
+
+`uv sync` 会读取 `pyproject.toml`，创建 `.venv`，安装项目运行依赖和当前包，并生成或使用 `uv.lock` 锁定依赖版本。
+
+常用可选依赖：
+
+```bash
+uv sync --extra dev
+uv sync --extra asr
+uv sync --extra dev --extra asr
+```
+
+其中 `dev` 包含 `pytest`、`ruff` 等开发工具；`asr` 包含运行本地 ASR 所需的 `faster-whisper`。
+
+安装依赖后，可通过 `uv run` 运行：
+
+```bash
+uv run lvnotes --help
+uv run lvnotes run <input-path>
+uv run lvnotes run <input-path> --mm
+uv run lvnotes run ./courses --mm
+uv run lvnotes run <input-path> --head-minutes 10
+uv run lvnotes inspect audio refined <input-path>
+uv run lvnotes inspect merge note <input-path> --paths
+uv run lvnotes assemble <input-path> --no-cache
 ```
 
 ### 命令说明

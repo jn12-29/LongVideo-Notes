@@ -1,0 +1,107 @@
+project:
+  cache_dir: ./cache
+  output_dir: ./output
+
+llm:
+  profiles:
+    # Candidate: custom OpenAI-compatible text endpoint.
+    # Local endpoints may use api_key_env: null. Remote endpoints should use an env var.
+    custom_gpt_main: &custom_gpt_main
+      provider: openai_compatible_chat
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+      model: deepseek-v4-pro
+      capabilities: [json_mode, reasoning]
+      max_context: 128000
+      timeout_seconds: 3000
+      reasoning_effort: medium
+      rpm_limit: null
+      tpm_limit: null
+
+    # Candidate: custom weak VLM for visual judging.
+    custom_weak_vlm: &custom_weak_vlm
+      provider: openai_compatible_chat
+      base_url: https://api.siliconflow.cn/v1
+      api_key_env: SILICONFLOW_API_KEY
+      model: Qwen/Qwen3.6-27B
+      capabilities: [vision, json_mode]
+      timeout_seconds: 3000
+      rpm_limit: 1000
+      tpm_limit: 40000
+
+    # Candidate: custom strong VLM for detailed visual descriptions.
+    custom_strong_vlm: &custom_strong_vlm
+      provider: openai_compatible_chat
+      base_url: https://api.siliconflow.cn/v1
+      api_key_env: SILICONFLOW_API_KEY
+      model: Pro/moonshotai/Kimi-K2.6
+      capabilities: [vision, json_mode]
+      max_context: 128000
+      timeout_seconds: 3000
+      rpm_limit: 500
+      tpm_limit: 2000000
+
+    # Active stable interfaces used by tasks.
+    # Switch providers by changing only these aliases.
+    gpt_main:
+      <<: *custom_gpt_main
+
+    weak_vlm:
+      <<: *custom_weak_vlm
+
+    strong_vlm:
+      <<: *custom_strong_vlm
+
+tasks:
+  segment: gpt_main
+  refine: gpt_main
+  outline: gpt_main
+  section: gpt_main
+  slide_judge: weak_vlm
+  slide_describe: strong_vlm
+
+asr:
+  backend: faster_whisper_local
+  model: large-v3
+  device: auto
+  compute_type: auto
+  use_batched: true
+  batch_size: 16
+  vad: true
+  language: zh
+
+audio_pipeline:
+  extract:
+    sample_rate: 16000
+    channels: 1
+  segment: {}
+  refine:
+    mode: adaptive
+    batch_size: 8
+
+visual_pipeline:
+  sample:
+    fps: 1
+  filter:
+    active_variant: default
+    variants_file: filter_variants.example.yaml
+    phash_threshold: 8
+    histogram_threshold: 0.12
+    duplicate_phash_threshold: 2
+    duplicate_histogram_threshold: 0.03
+    duplicate_pixel_threshold: 0.02
+    max_static_seconds: null
+    crop: null
+  describe:
+    concurrent_calls: 5
+merge:
+  outline:
+    target_chapter_count_hint: "5-12"
+  section:
+    concurrent_calls: 5
+  assemble:
+    timestamp_format: "[{hms}]"
+    include_toc: true
+    include_metadata: true
+    video_url_template: null
+    top_title: null
