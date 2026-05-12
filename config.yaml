@@ -6,31 +6,44 @@ llm:
   profiles:
     # Candidate: custom OpenAI-compatible text endpoint.
     # Local endpoints may use api_key_env: null. Remote endpoints should use an env var.
-    custom_gpt_main: &custom_gpt_main
+    deepseek_flash: &deepseek_flash
+      provider: openai_compatible_chat
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+      model: deepseek-v4-flash
+      capabilities: [json_mode, reasoning]
+      max_context: 1000000
+      timeout_seconds: 3000
+      reasoning_effort: medium
+      rpm_limit: null
+      tpm_limit: null
+
+    deepseek_pro: &deepseek_pro
       provider: openai_compatible_chat
       base_url: https://api.deepseek.com/v1
       api_key_env: DEEPSEEK_API_KEY
       model: deepseek-v4-pro
       capabilities: [json_mode, reasoning]
-      max_context: 128000
+      max_context: 1000000
       timeout_seconds: 3000
       reasoning_effort: medium
       rpm_limit: null
       tpm_limit: null
 
     # Candidate: custom weak VLM for visual judging.
-    custom_weak_vlm: &custom_weak_vlm
+    weak_vlm: &weak_vlm
       provider: openai_compatible_chat
       base_url: https://api.siliconflow.cn/v1
       api_key_env: SILICONFLOW_API_KEY
       model: Qwen/Qwen3.6-27B
       capabilities: [vision, json_mode]
+      max_context: 128000
       timeout_seconds: 3000
       rpm_limit: 1000
       tpm_limit: 40000
 
     # Candidate: custom strong VLM for detailed visual descriptions.
-    custom_strong_vlm: &custom_strong_vlm
+    strong_vlm: &strong_vlm
       provider: openai_compatible_chat
       base_url: https://api.siliconflow.cn/v1
       api_key_env: SILICONFLOW_API_KEY
@@ -41,22 +54,11 @@ llm:
       rpm_limit: 500
       tpm_limit: 2000000
 
-    # Active stable interfaces used by tasks.
-    # Switch providers by changing only these aliases.
-    gpt_main:
-      <<: *custom_gpt_main
-
-    weak_vlm:
-      <<: *custom_weak_vlm
-
-    strong_vlm:
-      <<: *custom_strong_vlm
-
 tasks:
-  segment: gpt_main
-  refine: gpt_main
-  outline: gpt_main
-  section: gpt_main
+  segment: deepseek_pro
+  refine: deepseek_pro
+  outline: deepseek_pro
+  section: deepseek_pro
   slide_judge: weak_vlm
   slide_describe: strong_vlm
 

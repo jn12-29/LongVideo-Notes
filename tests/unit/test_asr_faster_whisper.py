@@ -1,9 +1,14 @@
 from dataclasses import dataclass
+import sys
 
 import pytest
 
 from lvnotes.asr import faster_whisper_local
-from lvnotes.asr.faster_whisper_local import _consume_segments_with_progress, _normalize_segments
+from lvnotes.asr.faster_whisper_local import (
+    _consume_segments_with_progress,
+    _normalize_segments,
+    _resolve_device,
+)
 from lvnotes.core.config import ASRConfig
 from lvnotes.core.exceptions import ASRError
 
@@ -26,6 +31,40 @@ def test_normalize_segments_rejects_unordered_segments() -> None:
 
     with pytest.raises(AssertionError, match="ordered"):
         _normalize_segments(segments)
+
+
+def test_resolve_device_auto_uses_ctranslate2_cuda(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class CTranslate2:
+        @staticmethod
+        def get_supported_compute_types(device: str) -> set[str]:
+            assert device == "cuda"
+            return {"float16"}
+
+    monkeypatch.setitem(sys.modules, "ctranslate2", CTranslate2)
+
+    assert _resolve_device("auto") == "cuda"
+
+
+def test_resolve_device_auto_falls_back_to_cpu_when_cuda_check_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class CTranslate2:
+        @staticmethod
+        def get_supported_compute_types(device: str) -> set[str]:
+            raise RuntimeError("cuda unavailable")
+
+    monkeypatch.setitem(sys.modules, "ctranslate2", CTranslate2)
+
+    assert _resolve_device("auto") == "cpu"
+
+
+def test_resolve_device_explicit_device_does_not_check_cuda(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class CTranslate2:
+        @staticmethod
+        def get_supported_compute_types(device: str) -> set[str]:
+            raise AssertionError("should not be called")
+
+    monkeypatch.setitem(sys.modules, "ctranslate2", CTranslate2)
+
+    assert _resolve_device("cuda") == "cuda"
 
 
 def test_transcribe_wraps_invalid_backend_segments(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]

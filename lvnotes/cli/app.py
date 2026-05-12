@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from lvnotes.audio_pipeline import extract, refine, segment, transcribe
+from lvnotes.cli._cuda_bootstrap import preload_cuda_libs
 from lvnotes.core.artifacts import AudioArtifacts, VisualArtifacts
 from lvnotes.core.cache import hash_file
 from lvnotes.core.config import load_config
@@ -125,6 +126,7 @@ def main() -> None:
       run writes the final Markdown note, a timestamped archive, and cache artifacts.
       stage commands write their listed cache artifacts; inspect only reads existing artifacts.
     """
+    preload_cuda_libs()
 
 
 @main.command("run", short_help="Generate a Markdown note end to end.")

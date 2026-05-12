@@ -55,10 +55,12 @@ def _resolve_device(configured_device: str) -> str:
     if configured_device != "auto":
         return configured_device
     try:
-        import torch
-    except ImportError:
+        import ctranslate2
+
+        cuda_compute_types = ctranslate2.get_supported_compute_types("cuda")
+    except Exception:
         return "cpu"
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    return "cuda" if cuda_compute_types else "cpu"
 
 
 def _resolve_compute_type(configured_compute_type: str, device: str) -> str:

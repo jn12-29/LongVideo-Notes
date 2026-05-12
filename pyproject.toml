@@ -12,6 +12,8 @@ dependencies = [
   "anthropic",
   "click",
   "jinja2",
+  "nvidia-cublas-cu12>=12.9.2.10",
+  "nvidia-cudnn-cu12>=9.22.0.52",
   "openai",
   "pillow",
   "pydantic",
@@ -28,6 +30,10 @@ dev = [
   "pytest",
   "ruff",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
 [project.scripts]
 lvnotes = "lvnotes.cli.app:main"
