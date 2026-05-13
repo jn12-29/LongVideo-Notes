@@ -51,6 +51,7 @@ uv run lvnotes run <input-path>
 uv run lvnotes run <input-path> --mm
 uv run lvnotes run ./courses --mm
 uv run lvnotes run <input-path> --head-minutes 10
+uv run lvnotes output tidy --apply
 uv run lvnotes inspect audio refined <input-path>
 uv run lvnotes inspect merge note <input-path> --paths
 uv run lvnotes assemble <input-path> --no-cache
@@ -63,6 +64,7 @@ uv run lvnotes assemble <input-path> --no-cache
 | `lvnotes run <input-path>` | 端到端生成 Markdown 笔记。默认走纯音频模式,会依次跑音频管线和合并阶段。 |
 | `lvnotes run <input-path> --mm` | 端到端多模运行。视频文件会额外抽帧、筛图、对齐画面并结合视觉内容生成笔记;音频文件仍走纯音频模式。 |
 | `lvnotes inspect <namespace> <stage> <input-path>` | 只读查看已有中间产物或最终产物信息,不重新计算、不创建文件、不加写锁。常用于确认某个 stage 是否已产出结果。 |
+| `lvnotes output tidy [output-dir]` | 整理最终输出目录。默认只预览;传 `--apply` 后把带时间戳的归档笔记和同名 `_assets/` 移到 `output/_archive/<relative-dir>/`,latest 笔记留在原位。 |
 | `lvnotes extract <input-path>` | 从音频或视频中抽取标准 wav,生成音频抽取元信息。 |
 | `lvnotes transcribe <input-path>` | 读取抽取后的 wav,调用 ASR 生成原始转录。 |
 | `lvnotes segment <input-path>` | 基于原始转录生成语义分段。 |
@@ -88,6 +90,7 @@ uv run lvnotes assemble <input-path> --no-cache
 | `--debug` | 启用 refine 开发期审核流程,主要用于检查第一段清洗效果。 |
 | `--paths` | `inspect` 专用,只输出目标产物路径。 |
 | `--json` | `inspect` 专用,输出原始产物内容;目录输入时输出聚合 JSON。 |
+| `--apply` | `output tidy` 专用,执行移动;未传时只打印整理计划。 |
 
 输入路径可以是单个媒体文件或目录。目录输入会递归扫描支持的本地音视频文件,按相对路径排序后逐个处理；隐藏路径和已生成的 `*.head-<minutes>m.*` 裁剪文件会跳过。默认走纯音频模式；只有显式传 `--mm` 时视频文件才启用多模管线。目录输入加 `--mm` 时,视频文件走多模,音频文件自动走纯音频。
 `lvnotes --help` 会展示推荐命令、模式规则、常用选项和 stage 调试入口。
@@ -96,6 +99,7 @@ uv run lvnotes assemble <input-path> --no-cache
 写入型命令会对每个媒体文件对应的 cache 目录获取独占锁；`inspect` 保持只读，不加锁也不创建目录。
 运行时会显示 stage 级状态；ASR、refine、visual describe、merge section 等可计数长任务会显示进度条。`visual describe` 和 `merge section` 会按配置并发调用 LLM/VLM。
 单文件输入的最终 Markdown 会写入 `output/<source-stem>.md`，并同时写入 `output/<source-stem>-YYYYMMDD-HHMMSS.md` 作为本次导出归档。每个 Markdown 文件旁会生成同名图片资源目录，例如 `output/<source-stem>_assets/000001.png` 和 `output/<source-stem>-YYYYMMDD-HHMMSS_assets/000001.png`；Markdown 图片链接只指向同目录下的 `_assets/`。目录输入会在 `output/` 下保留输入目录内的相对目录结构,避免同名文件互相覆盖。
+`lvnotes output tidy` 可在生成后整理这些归档文件。它只处理严格匹配 `<source-stem>-YYYYMMDD-HHMMSS.md` 且同目录存在 latest `<source-stem>.md` 的归档;对应的 `<source-stem>-YYYYMMDD-HHMMSS_assets/` 会一起移动,保持 Markdown 图片链接有效。整理目标是 `output/_archive/<relative-dir>/`;例如 `output/week1/lecture-20260513-123456.md` 会移动到 `output/_archive/week1/lecture-20260513-123456.md`。命令不会删除文件,也不会覆盖已有目标。
 
 CLI 默认查找当前目录下的 `config.yaml`，也可通过 `--config <path>` 指定配置文件。可从 `config.example.yaml` 复制并按本地 LLM / ASR 环境调整。
 LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 profile 的任务都会继承。

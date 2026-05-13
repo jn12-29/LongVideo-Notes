@@ -8,13 +8,14 @@ CLI 设计文档。`lvnotes/cli/app.py` 是项目唯一命令行入口,负责命
 
 ## 1. Overview
 
-CLI 提供四类入口:
+CLI 提供五类入口:
 
 | 类型 | 命令 | 用途 |
 |---|---|---|
 | 端到端运行 | `lvnotes run <input-path>` | 默认纯音频模式,跑音频管线 + 合并阶段 |
 | 端到端多模 | `lvnotes run <input-path> --mm` | 显式启用多模 |
 | 查看产物 | `lvnotes inspect <namespace> <stage> <input-path>` | 查看中间产物摘要或路径 |
+| 整理输出 | `lvnotes output tidy [output-dir]` | 把带时间戳的归档笔记整理到 `output/_archive/<relative-dir>/` |
 | 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `sample` / `filter` / `semantic-filter` / `align` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
 
 CLI 的职责:
@@ -158,7 +159,38 @@ lvnotes inspect merge note <input-path> --head-minutes 10 --paths
 
 `inspect --help` 必须明确 `inspect` 不生成文件,不创建 cache/output 目录,只读取已有 artifact,并列出可读取的 audio / visual / merge artifact 名称。
 
-### 3.3 音频 stage 子命令
+### 3.3 `lvnotes output tidy`
+
+整理最终输出目录,不触发管线计算。
+
+建议命令:
+
+```bash
+lvnotes output tidy
+lvnotes output tidy --apply
+lvnotes output tidy ./output --apply
+lvnotes output tidy --config config.yaml
+```
+
+支持选项:
+
+- `--apply`:执行移动;未传时只打印整理计划,不创建目录、不移动文件
+- `--config <path>`:未传 `output-dir` 时从配置读取 `project.output_dir`
+
+整理规则:
+
+- 只处理严格匹配 `<source-stem>-YYYYMMDD-HHMMSS.md` 的归档笔记
+- 只有同目录存在 latest `<source-stem>.md` 时才纳入整理,避免误移动普通 Markdown
+- latest `<source-stem>.md` 和 `<source-stem>_assets/` 留在原位
+- 同名 `<source-stem>-YYYYMMDD-HHMMSS_assets/` 若存在,随归档 Markdown 一起移动
+- 归档目标为 `output/_archive/<relative-dir>/`,例如 `output/week1/lecture-20260513-123456.md` 移到 `output/_archive/week1/lecture-20260513-123456.md`
+- 已经位于 `_archive/` 下的文件跳过,保证幂等
+- 目标已存在时不覆盖,报告 conflict 并返回非 0
+- 不删除文件,不整理 cache 目录
+
+`run` 和 `assemble` 仍会在 output 原位生成 latest 与新的 timestamped archive;`output tidy` 是用户主动执行的后处理维护命令,不改变管线产物契约。
+
+### 3.4 音频 stage 子命令
 
 ```bash
 lvnotes extract <input-path>
@@ -196,7 +228,7 @@ lvnotes refine <input-path> --no-cache
 
 `run --debug` 只影响端到端运行中的 refine stage,语义与 `lvnotes refine <input-path> --debug` 相同。其他 stage 忽略该开关。
 
-### 3.4 多模 stage 子命令
+### 3.5 多模 stage 子命令
 
 ```bash
 lvnotes sample <input-path> --mm
@@ -227,7 +259,7 @@ lvnotes describe <input-path> --mm
 
 多模 stage 命令必须要求 `--mm`,未传时明确拒绝执行。不能因为用户调用了 `describe` 就隐式启用多模。
 
-### 3.5 合并 stage 子命令
+### 3.6 合并 stage 子命令
 
 ```bash
 lvnotes unify <input-path>
@@ -615,7 +647,7 @@ CLI 验收覆盖：
 
 - `python -m lvnotes --help` 与 `lvnotes --help` 入口一致。
 - 顶层 help 输出推荐工作流、模式规则、常用示例和常用选项。
-- 顶层 help 的 Commands 区按使用顺序展示 `run`、`inspect`、音频 stage、多模 stage、合并 stage,并为每个命令展示简短用途。
+- 顶层 help 的 Commands 区按使用顺序展示 `run`、`inspect`、`output`、音频 stage、多模 stage、合并 stage,并为每个命令展示简短用途。
 - `run --help`、`inspect --help` 与每个 stage command 的 help 展示对应命令会生成或读取的主要产物。
 - `lvnotes run <input-path>` 走纯音频路径。
 - `lvnotes run <video> --mm` 走多模路径。
@@ -632,6 +664,7 @@ Recommended workflow:
   lvnotes run <input-path> --mm
   lvnotes run ./courses --mm
   lvnotes run <input-path> --head-minutes 10
+  lvnotes output tidy --apply
   lvnotes inspect audio refined <input-path>
   lvnotes inspect merge note <input-path> --paths
   lvnotes inspect merge note <input-path> --head-minutes 10 --paths
@@ -660,6 +693,8 @@ lvnotes run lecture.mp4
 lvnotes run lecture.mp4 --mm
 lvnotes run ./courses --mm
 lvnotes run lecture.mp4 --head-minutes 10
+
+lvnotes output tidy --apply
 
 lvnotes extract lecture.mp4
 lvnotes transcribe lecture.mp4

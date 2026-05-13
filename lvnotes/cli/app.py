@@ -10,6 +10,7 @@ import click
 
 from lvnotes.audio_pipeline import extract, refine, segment, transcribe
 from lvnotes.cli._cuda_bootstrap import preload_cuda_libs
+from lvnotes.cli.output_tidy import apply_output_tidy_plan, build_output_tidy_plan
 from lvnotes.core.artifacts import AudioArtifacts, VisualArtifacts
 from lvnotes.core.cache import hash_file
 from lvnotes.core.config import load_config
@@ -101,6 +102,7 @@ def main() -> None:
       lvnotes run <input-path> --mm
       lvnotes run ./courses --mm
       lvnotes run <input-path> --head-minutes 10
+      lvnotes output tidy --apply
       lvnotes inspect audio refined <input-path>
       lvnotes inspect merge note <input-path> --paths
       lvnotes inspect merge note <input-path> --head-minutes 10 --paths
@@ -124,6 +126,7 @@ def main() -> None:
     \b
     Main outputs:
       run writes the final Markdown note, a timestamped archive, and cache artifacts.
+      output tidy moves timestamped archives under output/_archive/.
       stage commands write their listed cache artifacts; inspect only reads existing artifacts.
     """
     preload_cuda_libs()
@@ -209,6 +212,53 @@ def inspect_command(namespace: str, stage: str, input_path: Path, config_path: P
             raise click.exceptions.Exit(1)
         return
     _raise_for_batch_failures(failures)
+
+
+@main.group("output", short_help="Maintain generated output files.")
+def output_command() -> None:
+    """Maintain generated output files."""
+
+
+@output_command.command("tidy", short_help="Move timestamped note archives under output/_archive/.")
+@click.argument("output_dir", required=False, type=click.Path(path_type=Path))
+@click.option("--config", "config_path", type=click.Path(path_type=Path), default=None, help="Load output_dir from this config when OUTPUT_DIR is omitted.")
+@click.option("--apply", "apply_changes", is_flag=True, help="Move files. Without this, only print the plan.")
+def output_tidy_command(output_dir: Path | None, config_path: Path | None, apply_changes: bool) -> None:
+    """Move timestamped note archives under output/_archive/.
+
+    By default this is a dry run. Pass --apply to move files. Latest notes stay
+    in place; matching timestamped assets directories move with their Markdown.
+    """
+    try:
+        target_output_dir = output_dir.expanduser().resolve() if output_dir is not None else load_config(config_path).project.output_dir
+        plan = build_output_tidy_plan(target_output_dir)
+    except (LVNotesError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Output: {plan.output_dir}")
+    click.echo(f"Archive: {plan.archive_root}")
+    click.echo(f"Mode: {'apply' if apply_changes else 'dry-run'}")
+    if plan.moves:
+        click.echo("Moves:")
+        for move in plan.moves:
+            click.echo(f"  {move.source_md} -> {move.destination_md}")
+            if move.source_assets is not None and move.destination_assets is not None:
+                click.echo(f"  {move.source_assets} -> {move.destination_assets}")
+    else:
+        click.echo("Moves: 0")
+    if plan.conflicts:
+        click.echo("Conflicts:")
+        for conflict in plan.conflicts:
+            click.echo(f"  {conflict.source} -> {conflict.destination}: {conflict.reason}")
+        raise click.ClickException(f"output tidy found {len(plan.conflicts)} conflict(s)")
+    if not apply_changes:
+        click.echo("Dry run only; pass --apply to move files.")
+        return
+    try:
+        apply_output_tidy_plan(plan)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Moved archives: {len(plan.moves)}")
 
 
 def _register_stage_commands() -> None:

@@ -391,9 +391,11 @@ class Outline:
 - `cache/{input_hash}/content_blocks.json` —— `list[ContentBlock]` 序列化，调试用
 - `cache/{input_hash}/debug/outline-failure-YYYYMMDD-HHMMSS-ffffffZ.json` —— outline 不变量失败诊断历史,不参与 cache manifest
 
+`lvnotes output tidy` 可把已生成的 timestamped archive 移动到 `output_dir/_archive/<relative-dir>/` 做后处理整理。该命令不会改变 `run` / `assemble` 的产物契约:后续 assemble 仍会在 output 原位写入 latest 和新的 timestamped archive。整理时同名 `<source-stem>-YYYYMMDD-HHMMSS_assets/` 会随 Markdown 一起移动,确保归档笔记内的相对图片链接继续有效。
+
 ### CLI 访问入口
 
-CLI 提供 `lvnotes inspect <namespace> <stage> <input-path>` 查看任意中间产物，并通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline <input-path>`、`lvnotes assemble <input-path>`；实现时在 `cli/app.py` 中描述）。
+CLI 提供 `lvnotes inspect <namespace> <stage> <input-path>` 查看任意中间产物，通过顶层 stage 命令单独重跑某一 stage（如 `lvnotes outline <input-path>`、`lvnotes assemble <input-path>`），并通过 `lvnotes output tidy` 整理 output 下的 timestamped archives（实现时在 `cli/app.py` 中描述）。
 
 ### 用户编辑流程支持
 

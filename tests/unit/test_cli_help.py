@@ -13,6 +13,7 @@ def test_top_level_help_guides_common_workflow() -> None:
     assert "lvnotes run <input-path> --mm" in result.output
     assert "lvnotes run ./courses --mm" in result.output
     assert "lvnotes run <input-path> --head-minutes 10" in result.output
+    assert "lvnotes output tidy --apply" in result.output
     assert "audio-only mode" in result.output
     assert "multimodal mode" in result.output
     assert "with --mm, videos run in multimodal mode and audio files remain audio-only" in result.output
@@ -40,19 +41,22 @@ def test_top_level_help_lists_commands_with_short_help_in_workflow_order() -> No
     result = CliRunner().invoke(app.main, ["--help"])
 
     assert result.exit_code == 0
+    commands = result.output.split("Commands:", 1)[1]
     assert "run              Generate a Markdown note end to end." in result.output
     assert "inspect          Inspect existing artifacts without running stages." in result.output
+    assert "output           Maintain generated output files." in result.output
     assert "extract          Run audio extract stage." in result.output
     assert "describe         Run visual describe stage; requires --mm." in result.output
     assert "assemble         Run merge assemble stage." in result.output
-    assert result.output.index("  run") < result.output.index("  inspect")
-    assert result.output.index("  inspect") < result.output.index("  extract")
-    assert result.output.index("  extract") < result.output.index("  sample")
-    assert result.output.index("  sample") < result.output.index("  filter")
-    assert result.output.index("  filter") < result.output.index("  semantic-filter")
-    assert result.output.index("  semantic-filter") < result.output.index("  align")
-    assert result.output.index("  align") < result.output.index("  describe")
-    assert result.output.index("  describe") < result.output.index("  unify")
+    assert commands.index("  run") < commands.index("  inspect")
+    assert commands.index("  inspect") < commands.index("  output")
+    assert commands.index("  output") < commands.index("  extract")
+    assert commands.index("  extract") < commands.index("  sample")
+    assert commands.index("  sample") < commands.index("  filter")
+    assert commands.index("  filter") < commands.index("  semantic-filter")
+    assert commands.index("  semantic-filter") < commands.index("  align")
+    assert commands.index("  align") < commands.index("  describe")
+    assert commands.index("  describe") < commands.index("  unify")
 
 
 def test_run_help_mentions_common_run_options() -> None:
@@ -104,6 +108,17 @@ def test_inspect_help_lists_readable_artifacts_without_generation() -> None:
     assert "audio: extract, transcript, segments, refined" in result.output
     assert "visual: sample, filter, filter-variants, semantic-filter, semantic-judgements, align, describe" in result.output
     assert "merge: blocks, unify, outline, note, assemble" in result.output
+
+
+def test_output_tidy_help_mentions_dry_run_apply_and_assets() -> None:
+    result = CliRunner().invoke(app.main, ["output", "tidy", "--help"])
+
+    assert result.exit_code == 0
+    assert "Move timestamped note archives under output/_archive/." in result.output
+    assert "dry run" in result.output
+    assert "--apply" in result.output
+    assert "--config" in result.output
+    assert "assets" in result.output
 
 
 def test_stage_help_mentions_head_minutes_and_no_cache() -> None:
