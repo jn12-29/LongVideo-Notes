@@ -156,10 +156,10 @@ core/schemas/
 
 - `SampledFrame`
 - `VisualSampleIndex`
-- `VisualSemanticJudgement`
+- `VisualSemanticJudgement`（含 `semantic_key`、`quality_score`、`visible_text`、`content_summary`，用于语义分组和代表帧选择）
 - `VisualSemanticJudgementList`
-- `VisualAlignment`
-- `VisualDescription`
+- `VisualAlignment`（含 `has_audio_context`，用于控制 describe 是否可使用对应音频文本）
+- `VisualDescription`（含 `visible_text`、`visible_evidence` 和最终 `description`）
 - `VisualDescriptionList`
 
 `merge.py` 定义:
@@ -551,8 +551,13 @@ class VisualDescribeConfig:
     concurrent_calls: int = 5
 
 @dataclass(frozen=True)
+class VisualAlignConfig:
+    max_context_gap_seconds: float = 3.0
+
+@dataclass(frozen=True)
 class VisualPipelineConfig:
     filter: VisualFilterConfig
+    align: VisualAlignConfig
     describe: VisualDescribeConfig
 
 @dataclass(frozen=True)
@@ -588,7 +593,7 @@ class AppConfig:
     merge: MergeConfig
 ```
 
-实现可用 pydantic model 而不是 dataclass,但公开字段名和嵌套路径必须保持一致,例如 `ctx.config.project.cache_dir`、`ctx.config.audio_pipeline.extract.sample_rate`、`ctx.config.visual_pipeline.describe.concurrent_calls`、`ctx.config.merge.section.concurrent_calls`。
+实现可用 pydantic model 而不是 dataclass,但公开字段名和嵌套路径必须保持一致,例如 `ctx.config.project.cache_dir`、`ctx.config.audio_pipeline.extract.sample_rate`、`ctx.config.visual_pipeline.align.max_context_gap_seconds`、`ctx.config.visual_pipeline.describe.concurrent_calls`、`ctx.config.merge.section.concurrent_calls`。
 
 `LLMProfile` 与 `ASRConfig` 归属 `core/config.py`。`llm/` 和 `asr/` 只能 import 这些配置类型,不得在各自模块内重新定义配置 schema 副本。
 

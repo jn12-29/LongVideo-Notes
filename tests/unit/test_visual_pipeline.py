@@ -10,7 +10,17 @@ from lvnotes.core.config import AppConfig
 from lvnotes.core.context import ArtifactBundle, PipelineContext
 from lvnotes.core.exceptions import LLMError
 from lvnotes.core.paths import build_paths, resolve_visual_filter_image_path, resolve_visual_semantic_image_path
-from lvnotes.core.schemas import RefinedSegment, RefinedTranscript, SampledFrame, VisualAlignment, VisualDescription, VisualSampleIndex, VisualSemanticJudgement, VisualSemanticJudgementList
+from lvnotes.core.schemas import (
+    RefinedSegment,
+    RefinedTranscript,
+    SampledFrame,
+    VisualAlignment,
+    VisualDescription,
+    VisualDescriptionList,
+    VisualSampleIndex,
+    VisualSemanticJudgement,
+    VisualSemanticJudgementList,
+)
 from lvnotes.media import video
 from lvnotes.visual_pipeline import align, describe, filter, semantic_filter
 
@@ -306,7 +316,7 @@ def test_semantic_filter_copies_meaningful_frames(monkeypatch, tmp_path: Path) -
         semantic_filter,
         "_judge_frames",
         lambda ctx, samples, template: VisualSemanticJudgementList(
-            [VisualSemanticJudgement(1, "ppt", True, "content slide"), VisualSemanticJudgement(2, "speaker", False, "speaker only")]
+            [_meaningful_judgement(1, semantic_key="slide-1"), _nonmeaningful_judgement(2, medium="speaker")]
         ),
     )
 
@@ -318,6 +328,80 @@ def test_semantic_filter_copies_meaningful_frames(monkeypatch, tmp_path: Path) -
     assert not (ctx.paths.visual_semantic_frames_dir / "000002.png").exists()
 
 
+def test_semantic_filter_same_semantic_key_keeps_higher_quality_frame(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    _write_filter_frames(ctx, ["000001.png", "000002.png"])
+    atomic_write_json(
+        ctx.paths.visual_filtered_sample_json,
+        VisualSampleIndex([SampledFrame(1, 1.0, Path("000001.png")), SampledFrame(2, 2.0, Path("000002.png"))], 3.0),
+    )
+    monkeypatch.setattr(
+        semantic_filter,
+        "_judge_frames",
+        lambda ctx, samples, template: VisualSemanticJudgementList(
+            [
+                _meaningful_judgement(1, semantic_key="same-slide", quality_score=3),
+                _meaningful_judgement(2, semantic_key="same-slide", quality_score=5),
+            ]
+        ),
+    )
+
+    semantic_filter.run(ctx)
+
+    semantic = filter.read_samples(ctx.paths.visual_semantic_sample_json)
+    assert semantic.frames == [SampledFrame(2, 2.0, Path("000002.png"))]
+    assert not (ctx.paths.visual_semantic_frames_dir / "000001.png").exists()
+    assert (ctx.paths.visual_semantic_frames_dir / "000002.png").exists()
+
+
+def test_semantic_filter_same_score_keeps_more_complete_ocr_frame(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    _write_filter_frames(ctx, ["000001.png", "000002.png"])
+    atomic_write_json(
+        ctx.paths.visual_filtered_sample_json,
+        VisualSampleIndex([SampledFrame(1, 1.0, Path("000001.png")), SampledFrame(2, 2.0, Path("000002.png"))], 3.0),
+    )
+    monkeypatch.setattr(
+        semantic_filter,
+        "_judge_frames",
+        lambda ctx, samples, template: VisualSemanticJudgementList(
+            [
+                _meaningful_judgement(1, semantic_key="same-slide", quality_score=4, visible_text="AI"),
+                _meaningful_judgement(2, semantic_key="same-slide", quality_score=4, visible_text="AI Safety Concepts"),
+            ]
+        ),
+    )
+
+    semantic_filter.run(ctx)
+
+    semantic = filter.read_samples(ctx.paths.visual_semantic_sample_json)
+    assert semantic.frames == [SampledFrame(2, 2.0, Path("000002.png"))]
+
+
+def test_semantic_filter_keeps_distinct_semantic_keys(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    _write_filter_frames(ctx, ["000001.png", "000002.png"])
+    atomic_write_json(
+        ctx.paths.visual_filtered_sample_json,
+        VisualSampleIndex([SampledFrame(1, 1.0, Path("000001.png")), SampledFrame(2, 2.0, Path("000002.png"))], 3.0),
+    )
+    monkeypatch.setattr(
+        semantic_filter,
+        "_judge_frames",
+        lambda ctx, samples, template: VisualSemanticJudgementList(
+            [
+                _meaningful_judgement(1, semantic_key="slide-a"),
+                _meaningful_judgement(2, semantic_key="slide-b"),
+            ]
+        ),
+    )
+
+    semantic_filter.run(ctx)
+
+    semantic = filter.read_samples(ctx.paths.visual_semantic_sample_json)
+    assert semantic.frames == [SampledFrame(1, 1.0, Path("000001.png")), SampledFrame(2, 2.0, Path("000002.png"))]
+
+
 def test_semantic_filter_cache_key_includes_filter_frame_content(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     ctx = _ctx(tmp_path, mode="multimodal")
     _write_filter_frames(ctx, ["000001.png"])
@@ -326,7 +410,7 @@ def test_semantic_filter_cache_key_includes_filter_frame_content(monkeypatch, tm
 
     def judge_frames(ctx, samples, template):  # type: ignore[no-untyped-def]
         calls.append((ctx, samples, template))
-        return VisualSemanticJudgementList([VisualSemanticJudgement(1, "ppt", True, "content slide")])
+        return VisualSemanticJudgementList([_meaningful_judgement(1, semantic_key="slide-1")])
 
     monkeypatch.setattr(semantic_filter, "_judge_frames", judge_frames)
 
@@ -343,11 +427,40 @@ def test_semantic_filter_cache_key_includes_filter_frame_content(monkeypatch, tm
 
 
 def test_semantic_filter_validates_exactly_one_judgement_per_frame() -> None:
-    semantic_filter._validate_judgements(VisualSemanticJudgementList([VisualSemanticJudgement(1, "ppt", True, "ok")]), {1})
+    semantic_filter._validate_judgements(VisualSemanticJudgementList([_meaningful_judgement(1, semantic_key="slide-1")]), {1})
     with pytest.raises(LLMError):
-        semantic_filter._validate_judgements(VisualSemanticJudgementList([VisualSemanticJudgement(1, "invalid", True, "ok")]), {1})
+        semantic_filter._validate_judgements(VisualSemanticJudgementList([_meaningful_judgement(1, medium="invalid", semantic_key="slide-1")]), {1})
     with pytest.raises(LLMError):
-        semantic_filter._validate_judgements(VisualSemanticJudgementList([VisualSemanticJudgement(1, "ppt", True, "ok")]), {1, 2})
+        semantic_filter._validate_judgements(VisualSemanticJudgementList([_meaningful_judgement(1, semantic_key="slide-1")]), {1, 2})
+
+
+def test_semantic_filter_rejects_meaningful_judgement_without_semantic_key() -> None:
+    judgement = VisualSemanticJudgement(1, "ppt", True, "ok", None, 5, "AI Safety", "content")
+
+    with pytest.raises(LLMError):
+        semantic_filter._validate_judgements(VisualSemanticJudgementList([judgement]), {1})
+
+
+def test_semantic_filter_rejects_meaningful_judgement_without_quality_score() -> None:
+    judgement = VisualSemanticJudgement(1, "ppt", True, "ok", "slide", None, "AI Safety", "content")
+
+    with pytest.raises(LLMError):
+        semantic_filter._validate_judgements(VisualSemanticJudgementList([judgement]), {1})
+
+
+def test_semantic_filter_rejects_quality_score_outside_range() -> None:
+    judgement = _meaningful_judgement(1, semantic_key="slide", quality_score=6)
+
+    with pytest.raises(LLMError):
+        semantic_filter._validate_judgements(VisualSemanticJudgementList([judgement]), {1})
+
+
+@pytest.mark.parametrize("medium", ["speaker", "blank", "ui"])
+def test_semantic_filter_rejects_non_visual_medium_as_meaningful(medium: str) -> None:
+    judgement = _meaningful_judgement(1, medium=medium, semantic_key="slide")
+
+    with pytest.raises(LLMError):
+        semantic_filter._validate_judgements(VisualSemanticJudgementList([judgement]), {1})
 
 
 def test_align_maps_semantic_frames_to_refined_segments(tmp_path: Path) -> None:
@@ -358,7 +471,13 @@ def test_align_maps_semantic_frames_to_refined_segments(tmp_path: Path) -> None:
     )
     atomic_write_json(
         ctx.paths.visual_semantic_judgements_json,
-        VisualSemanticJudgementList([VisualSemanticJudgement(1, "ppt", True, "ok"), VisualSemanticJudgement(2, "chart", True, "ok"), VisualSemanticJudgement(3, "ppt", True, "ok")]),
+        VisualSemanticJudgementList(
+            [
+                _meaningful_judgement(1, semantic_key="slide-1"),
+                _meaningful_judgement(2, medium="chart", semantic_key="chart-1"),
+                _meaningful_judgement(3, semantic_key="slide-2"),
+            ]
+        ),
     )
     refined = RefinedTranscript(
         [
@@ -375,13 +494,41 @@ def test_align_maps_semantic_frames_to_refined_segments(tmp_path: Path) -> None:
     loaded = read_json_file(ctx.paths.visual_alignments_json, list[VisualAlignment])
     assert [item.segment_id for item in loaded] == [0, 1, 1]
     assert [item.frame_id for item in loaded] == [1, 2, 3]
+    assert [item.has_audio_context for item in loaded] == [True, True, False]
+
+
+def test_align_marks_frame_inside_segment_as_reliable_audio_context() -> None:
+    segment = RefinedSegment(0, 0.0, 10.0, "a", "a text", "a summary", [])
+
+    selected, has_audio_context = align._segment_for_timestamp(5.0, [segment], 3.0)
+
+    assert selected == segment
+    assert has_audio_context is True
+
+
+def test_align_marks_frame_near_segment_boundary_as_reliable_audio_context() -> None:
+    segment = RefinedSegment(0, 10.0, 20.0, "a", "a text", "a summary", [])
+
+    selected, has_audio_context = align._segment_for_timestamp(8.0, [segment], 3.0)
+
+    assert selected == segment
+    assert has_audio_context is True
+
+
+def test_align_marks_frame_far_from_segment_as_unreliable_audio_context() -> None:
+    segment = RefinedSegment(0, 10.0, 20.0, "a", "a text", "a summary", [])
+
+    selected, has_audio_context = align._segment_for_timestamp(2.0, [segment], 3.0)
+
+    assert selected == segment
+    assert has_audio_context is False
 
 
 def test_describe_uses_configured_parallelism(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     ctx = _ctx(tmp_path, mode="multimodal")
     alignments = [
-        VisualAlignment(0, 1, 1.0, Path("000001.png"), "ppt"),
-        VisualAlignment(0, 2, 2.0, Path("000002.png"), "chart"),
+        _alignment(0, 1, 1.0, Path("000001.png"), "ppt"),
+        _alignment(0, 2, 2.0, Path("000002.png"), "chart"),
     ]
     refined = RefinedTranscript([RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])], "zh", 10.0)
     object.__setattr__(ctx.artifacts, "audio", SimpleNamespace(is_complete=lambda: True, get_refined=lambda: refined, get_text_at=lambda start, end, strip_refs=True: "正文"))
@@ -398,7 +545,7 @@ def test_describe_uses_configured_parallelism(monkeypatch, tmp_path: Path) -> No
 
     def run_parallel(items, worker, *, desc: str, unit: str, max_workers: int):  # type: ignore[no-untyped-def]
         calls.append((desc, unit, max_workers, len(items)))
-        return [VisualDescription(item[0].segment_id, item[0].frame_id, 0.0, 10.0, item[0].image_source_path, item[0].medium, "中文描述") for item in items]
+        return [_description(item[0], "中文描述") for item in items]
 
     monkeypatch.setattr(describe, "run_parallel", run_parallel)
 
@@ -406,11 +553,14 @@ def test_describe_uses_configured_parallelism(monkeypatch, tmp_path: Path) -> No
 
     assert output.metadata["item_count"] == 2
     assert calls == [("visual.describe", "alignment", 5, 2)]
+    loaded = read_json_file(ctx.paths.visual_descriptions_json, VisualDescriptionList)
+    assert loaded.descriptions[0].visible_text == "AI Safety"
+    assert loaded.descriptions[0].visible_evidence == ["title"]
 
 
 def test_describe_uses_ref_stripped_audio_context(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     ctx = _ctx(tmp_path, mode="multimodal")
-    alignments = [VisualAlignment(0, 1, 1.0, Path("000001.png"), "ppt")]
+    alignments = [_alignment(0, 1, 1.0, Path("000001.png"), "ppt")]
     refined = RefinedTranscript([RefinedSegment(0, 0.0, 10.0, "主题", "正文 [[REF:0]]", "摘要", [0])], "zh", 10.0)
     audio_calls = []
 
@@ -430,7 +580,7 @@ def test_describe_uses_ref_stripped_audio_context(monkeypatch, tmp_path: Path) -
 
     def run_parallel(items, worker, *, desc: str, unit: str, max_workers: int):  # type: ignore[no-untyped-def]
         captured_items.extend(items)
-        return [VisualDescription(item[0].segment_id, item[0].frame_id, 0.0, 10.0, item[0].image_source_path, item[0].medium, "中文描述") for item in items]
+        return [_description(item[0], "中文描述") for item in items]
 
     monkeypatch.setattr(describe, "run_parallel", run_parallel)
 
@@ -440,9 +590,38 @@ def test_describe_uses_ref_stripped_audio_context(monkeypatch, tmp_path: Path) -
     assert captured_items == [(alignments[0], "正文")]
 
 
+def test_describe_uses_empty_audio_context_when_alignment_is_unreliable(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    alignments = [_alignment(0, 1, 30.0, Path("000001.png"), "ppt", has_audio_context=False)]
+    refined = RefinedTranscript([RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])], "zh", 40.0)
+
+    def get_text_at(start: float, end: float, strip_refs: bool = True):  # type: ignore[no-untyped-def]
+        raise AssertionError("far alignment must not request audio text")
+
+    object.__setattr__(ctx.artifacts, "audio", SimpleNamespace(is_complete=lambda: True, get_refined=lambda: refined, get_text_at=get_text_at))
+    (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
+    template = tmp_path / "describe.jinja"
+    template.write_text("prompt", encoding="utf-8")
+    monkeypatch.setattr(describe, "read_alignments", lambda path: alignments)
+    monkeypatch.setattr(describe, "prompt_path", lambda name: template)
+    monkeypatch.setattr(describe, "hash_prompt_template", lambda path: "prompt")
+    monkeypatch.setattr(describe, "cached_output", lambda *args, **kwargs: None)
+    captured_items = []
+
+    def run_parallel(items, worker, *, desc: str, unit: str, max_workers: int):  # type: ignore[no-untyped-def]
+        captured_items.extend(items)
+        return [_description(item[0], "中文描述") for item in items]
+
+    monkeypatch.setattr(describe, "run_parallel", run_parallel)
+
+    describe.run(ctx)
+
+    assert captured_items == [(alignments[0], "")]
+
+
 def test_describe_cache_key_includes_semantic_frame_content(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     ctx = _ctx(tmp_path, mode="multimodal")
-    alignments = [VisualAlignment(0, 1, 1.0, Path("000001.png"), "ppt")]
+    alignments = [_alignment(0, 1, 1.0, Path("000001.png"), "ppt")]
     refined = RefinedTranscript([RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])], "zh", 10.0)
     object.__setattr__(ctx.artifacts, "audio", SimpleNamespace(is_complete=lambda: True, get_refined=lambda: refined, get_text_at=lambda start, end, strip_refs=True: "正文"))
     atomic_write_json(ctx.paths.visual_alignments_json, alignments)
@@ -451,7 +630,7 @@ def test_describe_cache_key_includes_semantic_frame_content(monkeypatch, tmp_pat
 
     def run_parallel(items, worker, *, desc: str, unit: str, max_workers: int):  # type: ignore[no-untyped-def]
         calls.append((items, desc, unit, max_workers))
-        return [VisualDescription(item[0].segment_id, item[0].frame_id, 0.0, 10.0, item[0].image_source_path, item[0].medium, "中文描述") for item in items]
+        return [_description(item[0], "中文描述") for item in items]
 
     monkeypatch.setattr(describe, "run_parallel", run_parallel)
 
@@ -474,19 +653,94 @@ def test_describe_rejects_punctuation_only_description() -> None:
 
 def test_describe_one_retries_empty_description(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     ctx = _ctx(tmp_path, mode="multimodal")
-    alignment = VisualAlignment(0, 1, 1.0, Path("000001.png"), "ppt")
+    alignment = _alignment(0, 1, 1.0, Path("000001.png"), "ppt")
     segment_by_id = {0: RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])}
     image_path = ctx.paths.visual_semantic_frames_dir / "000001.png"
     image_path.write_bytes(b"frame")
     template = tmp_path / "describe.jinja"
     template.write_text("prompt", encoding="utf-8")
-    responses = iter([SimpleNamespace(description=":"), SimpleNamespace(description="中文描述")])
+    responses = iter([SimpleNamespace(description=":", visible_text="AI Safety", visible_evidence=["title"]), SimpleNamespace(description="中文描述", visible_text="AI Safety", visible_evidence=["title"])])
     monkeypatch.setattr(describe, "complete_json", lambda *args, **kwargs: next(responses))
     monkeypatch.setattr(describe, "for_task", lambda *args, **kwargs: object())
 
     result = describe._describe_one(ctx, template, segment_by_id, (alignment, "正文"))
 
     assert result.description == "中文描述"
+    assert result.visible_text == "AI Safety"
+    assert result.visible_evidence == ["title"]
+
+
+def test_describe_one_retries_empty_visible_evidence(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    alignment = _alignment(0, 1, 1.0, Path("000001.png"), "ppt")
+    segment_by_id = {0: RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])}
+    (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
+    template = tmp_path / "describe.jinja"
+    template.write_text("prompt", encoding="utf-8")
+    responses = iter(
+        [
+            SimpleNamespace(description="中文描述", visible_text="AI Safety", visible_evidence=[]),
+            SimpleNamespace(description="中文描述", visible_text="AI Safety", visible_evidence=["title"]),
+        ]
+    )
+    monkeypatch.setattr(describe, "complete_json", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(describe, "for_task", lambda *args, **kwargs: object())
+
+    result = describe._describe_one(ctx, template, segment_by_id, (alignment, "正文"))
+
+    assert result.visible_evidence == ["title"]
+
+
+def test_describe_one_rejects_empty_ppt_visible_text(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    alignment = _alignment(0, 1, 1.0, Path("000001.png"), "ppt")
+    segment_by_id = {0: RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])}
+    (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
+    template = tmp_path / "describe.jinja"
+    template.write_text("prompt", encoding="utf-8")
+    responses = iter([SimpleNamespace(description="中文描述", visible_text="", visible_evidence=["title"]) for _ in range(3)])
+    monkeypatch.setattr(describe, "complete_json", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(describe, "for_task", lambda *args, **kwargs: object())
+
+    with pytest.raises(LLMError, match="visible_text"):
+        describe._describe_one(ctx, template, segment_by_id, (alignment, "正文"))
+
+
+def test_describe_one_allows_unreadable_ppt_visible_text(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    alignment = _alignment(0, 1, 1.0, Path("000001.png"), "ppt")
+    segment_by_id = {0: RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])}
+    (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
+    template = tmp_path / "describe.jinja"
+    template.write_text("prompt", encoding="utf-8")
+    response = SimpleNamespace(description="图片中文字不可读。", visible_text="文字不可读", visible_evidence=["unreadable text area"])
+    monkeypatch.setattr(describe, "complete_json", lambda *args, **kwargs: response)
+    monkeypatch.setattr(describe, "for_task", lambda *args, **kwargs: object())
+
+    result = describe._describe_one(ctx, template, segment_by_id, (alignment, "正文"))
+
+    assert result.visible_text == "文字不可读"
+
+
+def test_describe_one_retries_banned_audio_context_phrase(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    ctx = _ctx(tmp_path, mode="multimodal")
+    alignment = _alignment(0, 1, 1.0, Path("000001.png"), "ppt")
+    segment_by_id = {0: RefinedSegment(0, 0.0, 10.0, "主题", "正文", "摘要", [])}
+    (ctx.paths.visual_semantic_frames_dir / "000001.png").write_bytes(b"frame")
+    template = tmp_path / "describe.jinja"
+    template.write_text("prompt", encoding="utf-8")
+    responses = iter(
+        [
+            SimpleNamespace(description="这张图与音频中提到的概念相呼应。", visible_text="AI Safety", visible_evidence=["title"]),
+            SimpleNamespace(description="图片展示标题 AI Safety。", visible_text="AI Safety", visible_evidence=["title"]),
+        ]
+    )
+    monkeypatch.setattr(describe, "complete_json", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(describe, "for_task", lambda *args, **kwargs: object())
+
+    result = describe._describe_one(ctx, template, segment_by_id, (alignment, "正文"))
+
+    assert result.description == "图片展示标题 AI Safety。"
 
 
 def test_resolve_visual_image_path_rejects_escape(tmp_path: Path) -> None:
@@ -533,6 +787,57 @@ def _test_image(kind: str):  # type: ignore[no-untyped-def]
 def _write_filter_frames(ctx: PipelineContext, names: list[str]) -> None:
     for name in names:
         (ctx.paths.visual_filter_frames_dir / name).write_bytes(b"frame")
+
+
+def _meaningful_judgement(
+    frame_id: int,
+    medium: str = "ppt",
+    semantic_key: str = "slide",
+    quality_score: int = 5,
+    visible_text: str = "AI Safety",
+    content_summary: str = "A content slide",
+) -> VisualSemanticJudgement:
+    return VisualSemanticJudgement(
+        frame_id=frame_id,
+        medium=medium,
+        is_meaningful=True,
+        reason="content slide",
+        semantic_key=semantic_key,
+        quality_score=quality_score,
+        visible_text=visible_text,
+        content_summary=content_summary,
+    )
+
+
+def _nonmeaningful_judgement(frame_id: int, medium: str = "speaker") -> VisualSemanticJudgement:
+    return VisualSemanticJudgement(
+        frame_id=frame_id,
+        medium=medium,
+        is_meaningful=False,
+        reason="not useful",
+        semantic_key=None,
+        quality_score=None,
+        visible_text="",
+        content_summary="",
+    )
+
+
+def _alignment(segment_id: int, frame_id: int, timestamp: float, image_source_path: Path, medium: str, has_audio_context: bool = True) -> VisualAlignment:
+    return VisualAlignment(segment_id, frame_id, timestamp, image_source_path, medium, has_audio_context)
+
+
+def _description(alignment: VisualAlignment, description: str) -> VisualDescription:
+    return VisualDescription(
+        segment_id=alignment.segment_id,
+        frame_id=alignment.frame_id,
+        start=0.0,
+        end=10.0,
+        image_source_path=alignment.image_source_path,
+        medium=alignment.medium,
+        description=description,
+        visible_text="AI Safety",
+        visible_evidence=["title"],
+    )
 
 
 def _config(tmp_path: Path) -> AppConfig:

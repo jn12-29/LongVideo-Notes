@@ -92,6 +92,8 @@ visual_pipeline:
     candidate_fps: 3.0
     min_content_score: 0.5
     duplicate_pixel_mean_threshold: 0.025
+  align:
+    max_context_gap_seconds: 3.0
   describe:
     concurrent_calls: 5
 merge:

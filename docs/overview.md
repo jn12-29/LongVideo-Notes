@@ -98,7 +98,7 @@ Stage 3 是 LLM 一次性看全文输出切分点(短输出,避免长输出衰�
 | 3     | align    | 纯逻辑 + refined text segments | `alignments.json` |
 | 4     | describe | 强 VLM + refined text，并发 | 每张 aligned semantic frame 的详细图文描述 |
 
-Stage 1 用 PySceneDetect 检测 scene，并直接从每个 scene 中临时抽候选帧选择代表帧。Stage 2 用弱 VLM 删除讲者、黑屏、UI、空白和无笔记价值画面。Stage 3 以 refined text segment 为权威边界,按图片 timestamp 对齐文本段;一个文本段内多张图全部保留。Stage 4 将 aligned semantic frame + 对应 refined text 一起喂给强 VLM,并发输出详细视觉描述。
+Stage 1 用 PySceneDetect 检测 scene，并直接从每个 scene 中临时抽候选帧选择代表帧。Stage 2 用弱 VLM 删除讲者、黑屏、UI、空白和无笔记价值画面，并按 `semantic_key` 对同语义内容去重，只保留质量最高的代表帧。Stage 3 以 refined text segment 为权威边界,按图片 timestamp 对齐文本段；远离任何文本段的图片仍保留，但不向 describe 传递音频上下文。Stage 4 以图片为事实来源，OCR 优先，并发输出 `visible_text`、`visible_evidence` 和详细视觉描述。
 
 ### 3.3 合并阶段
 
@@ -354,7 +354,7 @@ segments = complete_json(client, messages, SegmentList, options)
 
 **对外接口**:`VisualArtifacts` 类,跟 `AudioArtifacts` 对称。
 
-**字段命名约定**:视觉相关 schema 使用 `frame_id` 表示 filter 输出 frame namespace 中的帧编号,使用 `image_source_path` 表示相对当前视觉产物帧目录的图片源路径。`filtered_sample.json` 相对 `filter_frames/`;`semantic_sample.json`、`alignments.json`、`descriptions.json` 相对 `semantic_frames/`。最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
+**字段命名约定**:视觉相关 schema 使用 `frame_id` 表示 filter 输出 frame namespace 中的帧编号,使用 `image_source_path` 表示相对当前视觉产物帧目录的图片源路径。`filtered_sample.json` 相对 `filter_frames/`;`semantic_sample.json`、`alignments.json`、`descriptions.json` 相对 `semantic_frames/`。`VisualAlignment.has_audio_context` 只控制 describe 是否可使用对应音频文本；`VisualDescription.visible_text` 和 `visible_evidence` 是调试 OCR 忠实度的结构化产物。最终 Markdown 路径由 `core.paths.make_markdown_image_path()` 生成。全局 `source_path` 只表示解析后的绝对本地输入音频/视频路径。
 
 ### 5.7 `merge/` —— 合并与笔记生成
 
@@ -485,6 +485,8 @@ visual_pipeline:
     candidate_fps: 3.0
     min_content_score: 0.5
     duplicate_pixel_mean_threshold: 0.025
+  align:
+    max_context_gap_seconds: 3.0
   describe:
     concurrent_calls: 5
 

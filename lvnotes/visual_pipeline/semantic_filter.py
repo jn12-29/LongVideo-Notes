@@ -17,6 +17,8 @@ from lvnotes.visual_pipeline._common import cache_output, cached_output, prompt_
 log = logging.getLogger(__name__)
 
 _ALLOWED_MEDIA = {"ppt", "blackboard", "code", "demo", "chart", "table", "speaker", "blank", "ui", "other"}
+_NON_MEANINGFUL_MEDIA = {"speaker", "blank", "ui"}
+_CACHE_ALGORITHM = "semantic_filter_v2"
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -28,7 +30,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     profile_hash = hash_json(ctx.config.llm.profiles[ctx.config.tasks["slide_judge"]])
     cache_key = build_cache_key(
         "visual_semantic_filter",
-        {"samples": samples_hash, "images": image_hash, "profile": profile_hash, "prompt": prompt_hash},
+        {"samples": samples_hash, "images": image_hash, "profile": profile_hash, "prompt": prompt_hash, "algorithm": _CACHE_ALGORITHM},
     )
     if not ctx.no_cache and ctx.paths.visual_semantic_sample_json.exists():
         semantic = read_samples(ctx.paths.visual_semantic_sample_json)
@@ -78,6 +80,20 @@ def _validate_judgements(judgements: VisualSemanticJudgementList, frame_ids: set
             raise LLMError("visual semantic filter invariant failed")
         if not judgement.reason.strip():
             raise LLMError("visual semantic filter invariant failed")
+        if judgement.is_meaningful:
+            if judgement.medium in _NON_MEANINGFUL_MEDIA:
+                raise LLMError("visual semantic filter invariant failed")
+            if judgement.semantic_key is None or not judgement.semantic_key.strip():
+                raise LLMError("visual semantic filter invariant failed")
+            if judgement.quality_score is None or not 1 <= judgement.quality_score <= 5:
+                raise LLMError("visual semantic filter invariant failed")
+            if not judgement.content_summary.strip():
+                raise LLMError("visual semantic filter invariant failed")
+        else:
+            if judgement.semantic_key is not None:
+                raise LLMError("visual semantic filter invariant failed")
+            if judgement.quality_score is not None:
+                raise LLMError("visual semantic filter invariant failed")
     if seen != frame_ids:
         raise LLMError("visual semantic filter invariant failed")
 
@@ -85,16 +101,53 @@ def _validate_judgements(judgements: VisualSemanticJudgementList, frame_ids: set
 def _copy_meaningful_frames(ctx: PipelineContext, samples: VisualSampleIndex, judgements: VisualSemanticJudgementList) -> list[SampledFrame]:
     ctx.paths.visual_semantic_frames_dir.mkdir(parents=True, exist_ok=True)
     _remove_stale_semantic_frames(ctx.paths.visual_semantic_frames_dir)
-    meaningful = {judgement.frame_id for judgement in judgements.judgements if judgement.is_meaningful}
+    selected = _select_representative_frames(ctx, samples, judgements)
     kept: list[SampledFrame] = []
     for frame in samples.frames:
-        if frame.id not in meaningful:
+        if frame.id not in selected:
             continue
         source = resolve_visual_filter_image_path(ctx.paths, frame.image_source_path)
         target = ctx.paths.visual_semantic_frames_dir / frame.image_source_path.name
         shutil.copy2(source, target)
         kept.append(SampledFrame(id=frame.id, timestamp=frame.timestamp, image_source_path=target.relative_to(ctx.paths.visual_semantic_frames_dir)))
     return kept
+
+
+def _select_representative_frames(ctx: PipelineContext, samples: VisualSampleIndex, judgements: VisualSemanticJudgementList) -> set[int]:
+    frame_by_id = {frame.id: frame for frame in samples.frames}
+    groups: dict[str, list[tuple[SampledFrame, int, int, float]]] = {}
+    for judgement in judgements.judgements:
+        if not judgement.is_meaningful:
+            continue
+        assert judgement.semantic_key is not None
+        assert judgement.quality_score is not None
+        frame = frame_by_id[judgement.frame_id]
+        text_score = _visible_text_score(judgement.visible_text)
+        sharpness = _sharpness_score(resolve_visual_filter_image_path(ctx.paths, frame.image_source_path))
+        groups.setdefault(judgement.semantic_key.strip(), []).append((frame, judgement.quality_score, text_score, sharpness))
+    return {_best_group_frame(candidates).id for candidates in groups.values()}
+
+
+def _best_group_frame(candidates: list[tuple[SampledFrame, int, int, float]]) -> SampledFrame:
+    frame, _, _, _ = max(candidates, key=lambda candidate: (candidate[1], candidate[2], candidate[3], -candidate[0].id))
+    return frame
+
+
+def _visible_text_score(text: str) -> int:
+    return len("".join(text.split()))
+
+
+def _sharpness_score(path: Path) -> float:
+    try:
+        import cv2
+
+        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            return 0.0
+        return float(cv2.Laplacian(image, cv2.CV_64F).var())
+    except Exception:
+        log.debug("failed to score image sharpness path=%s", path, exc_info=True)
+        return 0.0
 
 
 def _remove_stale_semantic_frames(frames_dir: Path) -> None:

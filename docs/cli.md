@@ -127,7 +127,7 @@ audio:  extract → transcribe → segment → refine ┐
 visual: filter → semantic-filter ───────────────────┘
 ```
 
-`align` 和 `describe` 必须等 `AudioArtifacts.is_complete() == True`。`align` 将 `semantic_sample.json` 中的图片按 timestamp 映射到 refined text segments；`describe` 使用对应 refined segment 的文本作为图像理解上下文。
+`align` 和 `describe` 必须等 `AudioArtifacts.is_complete() == True`。`align` 将 `semantic_sample.json` 中的图片按 timestamp 映射到 refined text segments，并标记是否有可靠音频上下文；`describe` 以图片为事实来源，只有该标记为 true 时才把对应 refined segment 文本作为术语消歧上下文。
 
 `--head-minutes <minutes>` 会先在每个媒体文件同目录生成或复用开头片段文件,再将该片段作为本次运行的输入。片段文件名为 `<source-stem>.head-<minutes>m<source-suffix>`,例如 `lecture.mp4 --head-minutes 10` 对应 `lecture.head-10m.mp4`。后续 `PipelineContext.source_path`、输入 hash、缓存目录、输出 Markdown 名称和所有 stage 输入都基于该片段文件。目录扫描会跳过已存在的 `*.head-<minutes>m.*` 裁剪文件,避免重复处理。
 

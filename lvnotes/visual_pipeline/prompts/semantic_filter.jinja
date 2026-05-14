@@ -1,8 +1,8 @@
 Return JSON matching this shape:
-{"judgements":[{"frame_id":0,"medium":"ppt","is_meaningful":true,"reason":"brief reason"}]}
+{"judgements":[{"frame_id":0,"medium":"ppt","is_meaningful":true,"reason":"brief reason","semantic_key":"slide-title","quality_score":5,"visible_text":"readable OCR text","content_summary":"visible content only"}]}
 Write reason in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide terms when preserving the original wording is clearer.
 
-Judge each frame independently. Use the exact frame_id labels attached before each image.
+Compare all frames together. Use the exact frame_id labels attached before each image.
 
 Set is_meaningful=true only when the image contains useful visual information for technical notes, such as:
 - substantive PPT/slide content
@@ -18,6 +18,23 @@ Set is_meaningful=false for:
 
 Allowed medium values: ppt, blackboard, code, demo, chart, table, speaker, blank, ui, other.
 Use speaker for pure speaker frames, blank for black/empty frames, and ui for meeting/player UI frames.
+speaker, blank, and ui must always have is_meaningful=false.
+
+For every meaningful frame:
+- Assign a non-empty semantic_key.
+- Assign the same semantic_key to frames that show the same slide, same diagram, same chart, same code page, same demo state, or same whiteboard content when visible semantic content has no substantial additions.
+- Keep semantic states separate when visible content adds substantial text, formulas, labels, bullets, code lines, diagrams, examples, case images, or chart elements.
+- Extract visible OCR text into visible_text. Preserve line breaks or list structure when useful. If text is unreadable, use an empty string or explicitly say it is unreadable.
+- Write content_summary from visible image content only. Do not use audio or outside knowledge.
+- Score quality_score from 1 to 5 by OCR legibility, completeness, sharpness, lack of blur, lack of obstruction, and whether this frame contains the most complete visible content in its semantic group.
+
+For every non-meaningful frame:
+- semantic_key must be null.
+- quality_score must be null.
+- visible_text may be empty.
+- content_summary may be empty.
+
+Do not preserve multiple frames just because one is slightly sharper if their semantic content is the same; downstream code will keep the best frame in each semantic_key group.
 Return exactly one judgement for every frame in the input list.
 
 Frames:

@@ -18,6 +18,9 @@ from lvnotes.visual_pipeline._common import cache_output, cached_output, prompt_
 
 log = logging.getLogger(__name__)
 _DESCRIPTION_CONTENT_RE = re.compile(r"[\w\u4e00-\u9fff]")
+_OCR_REQUIRED_MEDIA = {"ppt", "chart", "table", "code"}
+_UNREADABLE_RE = re.compile(r"(不可读|无法读取|无法辨认|看不清|unreadable|illegible)", re.IGNORECASE)
+_BANNED_AUDIO_CONTEXT_RE = re.compile(r"(音频中|结合音频|相呼应|配合音频|标志着本节收尾|audio context)", re.IGNORECASE)
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -26,7 +29,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     alignments = read_alignments(ctx.paths.visual_alignments_json)
     refined = ctx.artifacts.audio.get_refined()
     segment_by_id = {segment.id: segment for segment in refined.segments}
-    audio_texts = [_audio_text_for_alignment(ctx, segment_by_id[alignment.segment_id]) for alignment in alignments]
+    audio_texts = [_audio_text_for_alignment(ctx, alignment, segment_by_id[alignment.segment_id]) for alignment in alignments]
     template = prompt_path("describe.jinja")
     alignments_hash = hash_json(alignments)
     image_hash = combined_content_hash([resolve_visual_semantic_image_path(ctx.paths, alignment.image_source_path) for alignment in alignments])
@@ -63,7 +66,9 @@ def run(ctx: PipelineContext) -> StageOutput:
 
 
 @dataclass(frozen=True)
-class _DescriptionOnly:
+class _DescriptionResult:
+    visible_text: str
+    visible_evidence: list[str]
     description: str
 
 
@@ -73,21 +78,23 @@ def _describe_one(ctx: PipelineContext, template: Path, segment_by_id: dict[int,
     image_path = resolve_visual_semantic_image_path(ctx.paths, alignment.image_source_path)
     base_prompt = Template(template.read_text(encoding="utf-8")).render(selection=alignment, audio_text=audio_text)
     result = None
+    invalid_reason = ""
     for attempt in range(3):
         prompt = base_prompt
         if attempt:
-            prompt += "\n\nPrevious response was invalid because description had no meaningful text. Return a complete Simplified Chinese sentence in description."
+            prompt += f"\n\nPrevious response was invalid because {invalid_reason}. Return valid JSON with visible_text, visible_evidence, and description."
         result = complete_json(
             for_task(ctx.config, "slide_describe"),
             [LLMMessage(role="user", content=[TextPart(text=prompt), ImagePart(path=image_path, mime_type="image/png")])],
-            _DescriptionOnly,
+            _DescriptionResult,
             LLMRequestOptions(temperature=0.2),
             1,
         )
-        if _has_description_content(result.description):
+        invalid_reason = _description_invalid_reason(result, alignment.medium)
+        if invalid_reason == "":
             break
-    if result is None or not _has_description_content(result.description):
-        raise LLMError(f"visual describe invariant failed: empty description frame_id={alignment.frame_id}")
+    if result is None or invalid_reason:
+        raise LLMError(f"visual describe invariant failed: {invalid_reason} frame_id={alignment.frame_id}")
     return VisualDescription(
         segment_id=alignment.segment_id,
         frame_id=alignment.frame_id,
@@ -96,12 +103,34 @@ def _describe_one(ctx: PipelineContext, template: Path, segment_by_id: dict[int,
         image_source_path=alignment.image_source_path,
         medium=alignment.medium,
         description=result.description,
+        visible_text=result.visible_text,
+        visible_evidence=[evidence.strip() for evidence in result.visible_evidence if evidence.strip()],
     )
 
 
-def _audio_text_for_alignment(ctx: PipelineContext, segment: RefinedSegment) -> str:
+def _audio_text_for_alignment(ctx: PipelineContext, alignment: VisualAlignment, segment: RefinedSegment) -> str:
+    if not alignment.has_audio_context:
+        return ""
     return ctx.artifacts.audio.get_text_at(segment.start, segment.end, strip_refs=True)
 
 
 def _has_description_content(description: str) -> bool:
     return _DESCRIPTION_CONTENT_RE.search(description) is not None
+
+
+def _description_invalid_reason(result: _DescriptionResult, medium: str) -> str:
+    if not _has_description_content(result.description):
+        return "description had no meaningful text"
+    if _BANNED_AUDIO_CONTEXT_RE.search(result.description):
+        return "description mentions audio context as visual fact"
+    evidence = [item.strip() for item in result.visible_evidence if item.strip()]
+    if not evidence:
+        return "visible_evidence was empty"
+    if medium in _OCR_REQUIRED_MEDIA and not _has_visible_text_or_unreadable_marker(result.visible_text):
+        return "visible_text was empty for OCR-first medium"
+    return ""
+
+
+def _has_visible_text_or_unreadable_marker(visible_text: str) -> bool:
+    text = visible_text.strip()
+    return bool(text and (_DESCRIPTION_CONTENT_RE.search(text) or _UNREADABLE_RE.search(text)))

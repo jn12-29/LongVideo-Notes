@@ -92,7 +92,7 @@ def run(ctx: PipelineContext) -> StageOutput: ...
 
 *VisualSlot 挂入规则*（多模模式）：
 
-`VisualDescription` 已经由 describe stage 从 `VisualAlignment` 和对应 refined segment 复制了图片、时间区间、medium 与语义过滤后的结果,是 merge 阶段消费视觉信息的完整产物。unify 不读取 `alignments.json`。
+`VisualDescription` 已经由 describe stage 从 `VisualAlignment` 和对应 refined segment 复制了图片、时间区间、medium 与语义过滤后的结果,并包含 OCR 调试字段 `visible_text` / `visible_evidence`。unify 只消费 `description` 生成 Markdown 视觉 slot，不读取 `alignments.json`。
 
 对每对 `(audio_segment, visual_description)`：
 

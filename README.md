@@ -70,9 +70,9 @@ uv run lvnotes assemble <input-path> --no-cache
 | `lvnotes segment <input-path>` | 基于原始转录生成语义分段。 |
 | `lvnotes refine <input-path>` | 清洗、整理分段转录,生成后续合并阶段使用的 refined transcript。 |
 | `lvnotes filter <input-path> --mm` | 用 PySceneDetect 场景检测，并直接从每个 scene 中筛选候选代表帧。 |
-| `lvnotes semantic-filter <input-path> --mm` | 用 VLM 判断过滤后帧是否有笔记价值。 |
-| `lvnotes align <input-path> --mm` | 将保留的关键帧按时间戳对齐到 refined transcript 段落。 |
-| `lvnotes describe <input-path> --mm` | 结合对应时间段的讲解文本,对关键画面生成详细视觉描述。 |
+| `lvnotes semantic-filter <input-path> --mm` | 用 VLM 判断过滤后帧是否有笔记价值，并按同语义内容去重，只保留代表帧。 |
+| `lvnotes align <input-path> --mm` | 将保留的关键帧按时间戳对齐到 refined transcript 段落，并标记是否有可靠音频上下文。 |
+| `lvnotes describe <input-path> --mm` | 以图片为事实来源，OCR 优先生成关键画面的结构化视觉描述。 |
 | `lvnotes unify <input-path>` | 把音频内容和可选视觉描述合并成统一内容块。 |
 | `lvnotes outline <input-path>` | 基于内容块生成章节大纲。 |
 | `lvnotes section <input-path>` | 按章节生成 Markdown 正文片段。 |

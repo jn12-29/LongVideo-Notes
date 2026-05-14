@@ -21,6 +21,10 @@ class VisualSemanticJudgement:
     medium: str
     is_meaningful: bool
     reason: str
+    semantic_key: str | None
+    quality_score: int | None
+    visible_text: str
+    content_summary: str
 
 
 @dataclass(frozen=True)
@@ -35,6 +39,7 @@ class VisualAlignment:
     timestamp: float
     image_source_path: Path
     medium: str
+    has_audio_context: bool
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,8 @@ class VisualDescription:
     image_source_path: Path
     medium: str
     description: str
+    visible_text: str
+    visible_evidence: list[str]
 
 
 @dataclass(frozen=True)

@@ -74,3 +74,21 @@ def test_visual_prompts_require_chinese_but_preserve_english_terms() -> None:
     assert "Write reason in Simplified Chinese" in semantic
     assert "Keep English technical terms" in describe
     assert "Keep English technical terms" in semantic
+
+
+def test_visual_prompts_require_semantic_grouping_and_ocr_first() -> None:
+    describe = _prompt("lvnotes/visual_pipeline/prompts/describe.jinja")
+    semantic = _prompt("lvnotes/visual_pipeline/prompts/semantic_filter.jinja")
+
+    assert "Judge each frame independently" not in semantic
+    assert "Compare all frames together" in semantic
+    assert "semantic_key" in semantic
+    assert "quality_score" in semantic
+    assert "visible_text" in semantic
+    assert "same semantic_key" in semantic
+
+    assert "The image is the source of truth" in describe
+    assert "OCR first" in describe
+    assert "Audio context is only for disambiguating visible terms" in describe
+    assert "do not infer unseen content from audio" in describe
+    assert "visible_evidence" in describe

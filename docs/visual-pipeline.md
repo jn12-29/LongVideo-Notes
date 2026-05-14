@@ -13,7 +13,7 @@
 | 3 | align | 纯逻辑 + `AudioArtifacts` | `alignments.json` |
 | 4 | describe | 强 VLM + refined text，并发 | `descriptions.json` |
 
-`filter` 用 PySceneDetect 检测场景边界，并直接从原视频临时抽取候选帧，只把最终代表帧写入稳定产物。`semantic_filter` 用弱 VLM 筛掉无语义图，后续 `align` 和 `describe` 只使用 `semantic_frames/`。
+`filter` 用 PySceneDetect 检测场景边界，并直接从原视频临时抽取候选帧，只把最终代表帧写入稳定产物。`semantic_filter` 用弱 VLM 筛掉无语义图，并在同语义组内只保留 OCR 更完整、清晰度更高、内容更完整的一张代表帧；后续 `align` 和 `describe` 只使用 `semantic_frames/`。
 
 ## Stage Contract
 
@@ -71,13 +71,17 @@ visual_pipeline:
     candidate_fps: 3.0
     min_content_score: 0.5
     duplicate_pixel_mean_threshold: 0.025
+  align:
+    max_context_gap_seconds: 3.0
+  describe:
+    concurrent_calls: 5
 ```
 
 **缓存键**：`visual_filter` 使用算法标记、输入文件 hash 与 filter 配置 hash。算法标记用于隔离不兼容的 filter 缓存版本；cache manifest 只记录稳定产物。`--no-cache` 会重建稳定产物。
 
 ### Stage 2: semantic_filter
 
-**职责**：用弱 VLM 判断每张过滤后图片是否有语义价值，并筛掉讲者、黑屏、UI、空白或无笔记价值的画面。
+**职责**：用弱 VLM 判断每张过滤后图片是否有语义价值，提取可见文字和内容摘要，跨帧识别同语义内容，并在每个语义组内选择代表帧。
 
 **Input**：`filtered_sample.json` 与 `visual/filter_frames/`。
 
@@ -85,13 +89,19 @@ visual_pipeline:
 
 **实现要点**：
 
-- 对每张 `filtered_sample.json` 中的图片独立判断。
+- 对所有 `filtered_sample.json` 图片整体比较，不逐帧孤立保留重复内容。
 - `is_meaningful=true` 仅用于 PPT 正文页、章节标题页、公式、图表、表格、流程图、代码、demo、黑板/白板或其他有报告语义的画面。
 - `is_meaningful=false` 用于纯讲者镜头、黑屏、大面积空白、会议 UI、播放器 UI、转场、水印或无笔记价值画面。
-- meaningful 图片复制到 `visual/semantic_frames/`。
+- meaningful judgement 必须包含非空 `semantic_key`、`1..5` 的 `quality_score`、图片可见文字 `visible_text` 和只基于图片的 `content_summary`。
+- `speaker`、`blank`、`ui` 不允许 `is_meaningful=true`。
+- 同一张 PPT、同一图表、同一代码页、同一 demo 状态或同一白板内容，且可见语义内容没有实质新增时，使用相同 `semantic_key`。
+- 新增标题、项目符号、公式、图表元素、代码行、关键标注或案例图片时，视为新的语义状态。
+- 每个 `semantic_key` 只复制一张代表帧到 `visual/semantic_frames/`。
+- 代表帧选择顺序：`quality_score` 高者优先；`visible_text` 更完整者优先；本地图像清晰度评分更高者优先；仍并列时使用更小 `frame_id`。
+- `semantic_judgements.json` 保留所有输入帧的判断，`semantic_sample.json` 只包含代表帧。
 - `semantic_sample.json` 复用 `VisualSampleIndex`，`image_source_path` 相对 `visual/semantic_frames/`。
 
-**缓存键**：`visual_semantic_filter` 使用 `filtered_sample.json` hash、`visual/filter_frames/` 图片内容 hash、弱 VLM profile hash 与 prompt hash。
+**缓存键**：`visual_semantic_filter` 使用算法标记、`filtered_sample.json` hash、`visual/filter_frames/` 图片内容 hash、弱 VLM profile hash 与 prompt hash。
 
 ### Stage 3: align
 
@@ -103,15 +113,20 @@ visual_pipeline:
 
 **实现要点**：
 
-- `segment.start <= frame.timestamp < segment.end` 时分配到该文本 segment。
-- 不在任何 segment 内时分配到最近的 refined segment。
+- `segment.start <= frame.timestamp < segment.end` 时分配到该文本 segment，并标记 `has_audio_context=true`。
+- 不在任何 segment 内但距离最近 segment 边界不超过 `visual_pipeline.align.max_context_gap_seconds` 时，分配到最近 segment，并标记 `has_audio_context=true`。
+- 距离最近 segment 边界超过容差时，仍分配到最近 segment 以保留图片，但标记 `has_audio_context=false`；describe 阶段必须传空 audio context。
 - 一个文本 segment 内可以保留多张图，按 timestamp 排序。
 
-**缓存键**：`visual_align` 使用 semantic sample hash、semantic judgements hash 与 refined transcript hash。
+**缓存键**：`visual_align` 使用 semantic sample hash、semantic judgements hash、refined transcript hash 与 align 配置 hash。
+
+**配置项**（`visual_pipeline.align.*`）：
+
+- `max_context_gap_seconds: float`，默认 `3.0`，不在任何 segment 内的图片与最近 segment 边界的最大可靠音频上下文距离；`0` 表示只有落在 segment 内的图片可使用音频上下文。
 
 ### Stage 4: describe
 
-**职责**：用强 VLM 为每张 aligned semantic frame 生成结合对应 refined text segment 的详细视觉描述。
+**职责**：用强 VLM 为每张 aligned semantic frame 生成忠实于图片的结构化视觉描述。
 
 **Input**：`alignments.json`、`visual/semantic_frames/`、`ctx.artifacts.audio.get_refined()` 与 `ctx.artifacts.audio.get_text_at(...)`。
 
@@ -121,9 +136,14 @@ visual_pipeline:
 
 - CLI 调度层保证启动前 `AudioArtifacts.is_complete() == True`，且已运行 `align`。
 - 图片从 `visual/semantic_frames/` 解析。
-- 传给 VLM 的 `audio_text` 通过 `AudioArtifacts.get_text_at(segment.start, segment.end, strip_refs=True)` 获取，避免把 `[[REF:N]]` 内部 marker 泄漏给 VLM。
+- 图片是事实来源。描述必须优先 OCR，尽量按 PPT 原顺序转写标题、项目符号、公式、图表标签、代码和表格文字，再补充图表、结构、布局、箭头关系、案例图片和视觉重点。
+- `has_audio_context=true` 时，传给 VLM 的 `audio_text` 通过 `AudioArtifacts.get_text_at(segment.start, segment.end, strip_refs=True)` 获取，避免把 `[[REF:N]]` 内部 marker 泄漏给 VLM；音频文本只能用于术语消歧。
+- `has_audio_context=false` 时，传空 `audio_text`，避免远距离音频污染图片描述。
 - `VisualDescription.frame_id`、`image_source_path`、`medium` 来自 `VisualAlignment`。
 - `VisualDescription.start/end` 使用对应 refined text segment 的 `start/end`。
+- `VisualDescription.visible_text` 保存图片可见文字 OCR 结果，`visible_evidence` 保存支持描述的可见证据列表。
+- `description` 必须基于 `visible_text` 和 `visible_evidence`，不得出现把音频当图片事实的表达，例如“音频中”“结合音频”“相呼应”“配合音频”“标志着本节收尾”。
+- `ppt`、`chart`、`table`、`code` 的 `visible_text` 必须非空，除非模型明确说明文字不可读。
 - LLM 调用通过 `for_task(ctx.config, "slide_describe")` 和 `complete_json(...)`。
 - 每张 aligned semantic frame 独立调用强 VLM，并发数由 `visual_pipeline.describe.concurrent_calls` 控制。
 
@@ -150,6 +170,9 @@ visual_pipeline:
 2. `filtered_sample.json` 中的 `SampledFrame.id` 按最终 filter 输出的 timestamp 顺序从 `0` 重新编号；`semantic_sample.json` 保留该 namespace。
 3. 所有 `image_source_path` 必须是相对路径，不得是绝对路径或通过 `..` 逃逸对应帧目录。
 4. `descriptions.json` 是 merge 阶段消费视觉信息的完整产物。
+5. meaningful `VisualSemanticJudgement` 必须有非空 `semantic_key` 和 `1..5` 的 `quality_score`；non-meaningful judgement 的这两个字段必须为 `null`。
+6. `VisualAlignment.has_audio_context` 只表示 describe 阶段是否可使用对应 segment 的音频文本，不影响图片保留。
+7. `VisualDescription.description` 必须有可见证据支撑；OCR 优先媒体的 `visible_text` 不能为空，除非明确说明文字不可读。
 
 ## VisualArtifacts
 

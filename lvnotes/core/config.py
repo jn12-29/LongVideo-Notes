@@ -213,8 +213,20 @@ class VisualDescribeConfig(FrozenModel):
         return value
 
 
+class VisualAlignConfig(FrozenModel):
+    max_context_gap_seconds: float = 3.0
+
+    @field_validator("max_context_gap_seconds")
+    @classmethod
+    def validate_max_context_gap_seconds(cls, value: float) -> float:
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("max_context_gap_seconds must be finite and non-negative")
+        return value
+
+
 class VisualPipelineConfig(FrozenModel):
     filter: VisualFilterConfig = Field(default_factory=VisualFilterConfig)
+    align: VisualAlignConfig = Field(default_factory=VisualAlignConfig)
     describe: VisualDescribeConfig = Field(default_factory=VisualDescribeConfig)
 
 

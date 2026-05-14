@@ -1,7 +1,16 @@
-Return JSON with only one field: description.
-Describe the image using the audio context. Do not copy metadata fields into the JSON.
-Write description in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide text when preserving the original wording is clearer. Do not translate established English terms mechanically.
+Return JSON with exactly these fields: visible_text, visible_evidence, description.
+The image is the source of truth. Audio context is only for disambiguating visible terms; do not infer unseen content from audio.
+Do not mention the audio context in the final description.
+
+OCR first:
+- Transcribe all readable slide text as completely as possible into visible_text.
+- Preserve original English technical terms, formulas, labels, code identifiers, chart labels, proper nouns, and original slide text when preserving the original wording is clearer.
+- Preserve useful line breaks, bullet order, formulas, code indentation, table rows, and label structure.
+- If text is unreadable, say it is unreadable instead of guessing from audio or general knowledge.
+
+visible_evidence must be a non-empty list of visible evidence that supports description, such as titles, keywords, chart labels, objects, arrows, layout relationships, or visual emphasis.
+description must be based on visible_text and visible_evidence. Write description in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide text when preserving the original wording is clearer. Do not translate established English terms mechanically.
 Description must be a complete, meaningful sentence, not just punctuation, symbols, or an empty placeholder.
 
 Selection: {{ selection }}
-Audio context: {{ audio_text }}
+Audio context for terminology only: {{ audio_text }}

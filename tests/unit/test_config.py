@@ -57,6 +57,7 @@ def test_app_config_validates_minimal_config() -> None:
     assert config.visual_pipeline.filter.candidate_fps == 3.0
     assert config.visual_pipeline.filter.min_content_score == 0.5
     assert config.visual_pipeline.filter.duplicate_pixel_mean_threshold == 0.025
+    assert config.visual_pipeline.align.max_context_gap_seconds == 3.0
     assert config.visual_pipeline.describe.concurrent_calls == 5
 
 
@@ -96,6 +97,14 @@ def test_visual_describe_concurrent_calls_must_be_positive() -> None:
     payload["visual_pipeline"] = {"describe": {"concurrent_calls": 0}}
 
     with pytest.raises(ValueError, match="concurrent_calls"):
+        AppConfig.model_validate(payload)
+
+
+def test_visual_align_max_context_gap_seconds_must_be_non_negative() -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"align": {"max_context_gap_seconds": -1}}
+
+    with pytest.raises(ValueError, match="max_context_gap_seconds"):
         AppConfig.model_validate(payload)
 
 
