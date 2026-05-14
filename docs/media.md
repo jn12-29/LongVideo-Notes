@@ -1,6 +1,6 @@
 # Media Module
 
-`media/` 模块设计文档。本模块是全项目 ffmpeg / ffprobe 的唯一入口,负责媒体元信息读取、抽取 wav、抽取采样帧和创建开头裁剪文件。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`。
+`media/` 模块设计文档。本模块是全项目 ffmpeg / ffprobe 的唯一入口,负责媒体元信息读取、抽取 wav、按需抽取视频帧和创建开头裁剪文件。**写代码前必读**本文档以及 `coding-standards.md`、`README.md`、`docs/overview.md`。
 
 文档结构:Overview、Design Considerations、Public API、Module Layout、Error Handling、Dependencies、Implementation Order。
 
@@ -12,9 +12,9 @@
 
 | 模块 | 职责 | 主要消费者 |
 |---|---|---|
-| `probe.py` | 调 `ffprobe` 读取音视频元信息 | `audio_pipeline/extract.py`、`visual_pipeline/sample.py`、`cli/app.py` |
+| `probe.py` | 调 `ffprobe` 读取音视频元信息 | `audio_pipeline/extract.py`、`visual_pipeline/filter.py`、`cli/app.py` |
 | `audio.py` | 调 `ffmpeg` 抽取 / 转码音频 wav | `audio_pipeline/extract.py` |
-| `video.py` | 调 `ffmpeg` 抽取视频帧 | `visual_pipeline/sample.py` |
+| `video.py` | 调 `ffmpeg` 抽取视频帧 | 单元测试和后续显式抽帧需求 |
 | `trim.py` | 调 `ffmpeg` 创建输入开头裁剪文件 | `cli/app.py` |
 
 全项目只有 `media/` 允许直接使用 `subprocess` 调用 `ffmpeg` / `ffprobe`。其他模块需要媒体处理时,必须调用 `media/` 暴露的函数。
@@ -168,7 +168,7 @@ audio_path = extract_wav(
 
 ### 3.3 `video.py`
 
-职责:封装视频帧抽取。
+职责:封装通用固定 fps 视频帧抽取。当前多模 filter 阶段直接用 OpenCV 从原视频读取最终候选帧，不通过该 API 生成稳定视觉产物。
 
 ```python
 @dataclass(frozen=True)
@@ -184,7 +184,7 @@ def extract_frames(
 ) -> list[ExtractedFrame]: ...
 ```
 
-语义:按固定 fps 从视频中抽取采样帧,返回实际生成的帧路径与时间戳列表。调用方负责根据返回列表构造 `VisualSampleIndex`。
+语义:按固定 fps 从视频中抽取帧,返回实际生成的帧路径与时间戳列表。该函数只提供通用 media 能力，不定义视觉管线 schema 或缓存合同。
 
 实现要点:
 
@@ -224,7 +224,7 @@ def make_head_trim_path(input_path: Path, head_minutes: float) -> Path: ...
 |---|---|---|
 | `probe_media` | 调 ffprobe,解析元信息 | 不写缓存、不推断处理模式 |
 | `extract_wav` | 抽取 / 转码 wav | 不决定默认配置、不写 `extract.json` |
-| `extract_frames` | 固定 fps 抽帧,返回帧路径与时间戳 | 不做视觉聚类、不生成 `VisualSampleIndex` |
+| `extract_frames` | 固定 fps 抽帧,返回帧路径与时间戳 | 不做视觉聚类、不生成视觉管线 schema 或稳定缓存产物 |
 | `trim_media_head` | 创建或复用开头裁剪文件 | 不计算 input hash、不创建 pipeline cache |
 | `resolve_head_trim_path` | 解析并校验已存在裁剪文件 | 不创建裁剪文件、不创建锁文件 |
 
@@ -336,7 +336,7 @@ Python 标准库:
 4. 实现 `trim.py`
 5. 为公开函数补单元测试
 6. 接入 `audio_pipeline/extract.py`
-7. 接入 `visual_pipeline/sample.py`
+7. 接入 `visual_pipeline/filter.py` 的媒体探测需求
 8. 接入 CLI `--head-minutes`
 
 验收标准:

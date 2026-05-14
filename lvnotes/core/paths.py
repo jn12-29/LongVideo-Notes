@@ -15,16 +15,13 @@ class PipelinePaths:
     run_dir: Path
     audio_dir: Path
     visual_dir: Path
-    visual_raw_frames_dir: Path
     visual_filter_frames_dir: Path
-    visual_filter_variants_dir: Path
     visual_semantic_frames_dir: Path
     debug_dir: Path
     refined_dir: Path
     sections_dir: Path
     audio_wav: Path
     audio_extract_json: Path
-    visual_sample_json: Path
     visual_filtered_sample_json: Path
     visual_semantic_sample_json: Path
     visual_semantic_judgements_json: Path
@@ -52,16 +49,13 @@ def build_paths(source_path: Path, cache_dir: Path, output_dir: Path, input_hash
         run_dir=run_dir,
         audio_dir=audio_dir,
         visual_dir=visual_dir,
-        visual_raw_frames_dir=visual_dir / "raw_frames",
         visual_filter_frames_dir=visual_dir / "filter_frames",
-        visual_filter_variants_dir=visual_dir / "filter_variants",
         visual_semantic_frames_dir=visual_dir / "semantic_frames",
         debug_dir=run_dir / "debug",
         refined_dir=run_dir / "refined",
         sections_dir=run_dir / "sections",
         audio_wav=audio_dir / "audio.wav",
         audio_extract_json=audio_dir / "extract.json",
-        visual_sample_json=visual_dir / "sample.json",
         visual_filtered_sample_json=visual_dir / "filtered_sample.json",
         visual_semantic_sample_json=visual_dir / "semantic_sample.json",
         visual_semantic_judgements_json=visual_dir / "semantic_judgements.json",
@@ -102,10 +96,6 @@ def make_output_asset_path(output_note_md: Path, image_source_path: Path) -> Pat
 
 def make_output_markdown_image_path(output_note_md: Path, image_source_path: Path) -> Path:
     return Path(os_path_relpath(make_output_asset_path(output_note_md, image_source_path), output_note_md.parent))
-
-
-def resolve_visual_raw_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:
-    return _resolve_visual_image_path(paths.visual_raw_frames_dir, image_source_path, "visual_raw_frames_dir")
 
 
 def resolve_visual_filter_image_path(paths: PipelinePaths, image_source_path: Path) -> Path:

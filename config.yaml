@@ -82,18 +82,16 @@ audio_pipeline:
     batch_size: 8
 
 visual_pipeline:
-  sample:
-    fps: 1
   filter:
-    active_variant: default
-    variants_file: filter_variants.example.yaml
-    phash_threshold: 8
-    histogram_threshold: 0.12
-    duplicate_phash_threshold: 2
-    duplicate_histogram_threshold: 0.03
-    duplicate_pixel_threshold: 0.02
-    max_static_seconds: null
-    crop: null
+    detector: content
+    threshold: auto
+    auto_threshold_candidates: [10.0, 15.0, 20.0, 25.0, 27.0, 30.0, 35.0, 40.0]
+    target_frames_per_minute: 1.5
+    min_scene_len_seconds: 1.0
+    representative: content
+    candidate_fps: 3.0
+    min_content_score: 0.5
+    duplicate_pixel_mean_threshold: 0.025
   describe:
     concurrent_calls: 5
 merge:

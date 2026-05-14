@@ -23,7 +23,7 @@ from lvnotes.core.progress import progress_write
 from lvnotes.media.probe import probe_media
 from lvnotes.media.trim import resolve_head_trim_path, trim_media_head
 from lvnotes.merge import assemble, outline, section, unify
-from lvnotes.visual_pipeline import align, describe, filter, sample, semantic_filter
+from lvnotes.visual_pipeline import align, describe, filter, semantic_filter
 from lvnotes.llm import for_task
 
 log = logging.getLogger(__name__)
@@ -59,7 +59,6 @@ AUDIO_STAGES: dict[str, StageRun] = {
     "refine": refine.run,
 }
 VISUAL_STAGES: dict[str, StageRun] = {
-    "sample": sample.run,
     "filter": filter.run,
     "semantic-filter": semantic_filter.run,
     "align": align.run,
@@ -77,8 +76,7 @@ STAGE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "transcribe": ("cache/{input_hash}/transcript_raw.json",),
     "segment": ("cache/{input_hash}/segments.json",),
     "refine": ("cache/{input_hash}/refined_transcript.json", "cache/{input_hash}/refined/{seg_id:04d}.json"),
-    "sample": ("cache/{input_hash}/visual/raw_frames/", "cache/{input_hash}/visual/sample.json"),
-    "filter": ("cache/{input_hash}/visual/filter_frames/", "cache/{input_hash}/visual/filtered_sample.json", "cache/{input_hash}/visual/filter_variants/"),
+    "filter": ("cache/{input_hash}/visual/filter_frames/", "cache/{input_hash}/visual/filtered_sample.json"),
     "semantic-filter": ("cache/{input_hash}/visual/semantic_frames/", "cache/{input_hash}/visual/semantic_sample.json", "cache/{input_hash}/visual/semantic_judgements.json"),
     "align": ("cache/{input_hash}/visual/alignments.json",),
     "describe": ("cache/{input_hash}/visual/descriptions.json",),
@@ -156,8 +154,7 @@ def run_command(input_path: Path, config_path: Path | None, mm: bool, head_minut
 
     \b
     Multimodal extras with --mm:
-      cache/{input_hash}/visual/raw_frames/ and visual/sample.json
-      cache/{input_hash}/visual/filter_frames/, visual/filtered_sample.json, and visual/filter_variants/
+      cache/{input_hash}/visual/filter_frames/ and visual/filtered_sample.json
       cache/{input_hash}/visual/semantic_frames/, visual/semantic_sample.json, visual/semantic_judgements.json
       cache/{input_hash}/visual/alignments.json and visual/descriptions.json
     """
@@ -187,7 +184,7 @@ def inspect_command(namespace: str, stage: str, input_path: Path, config_path: P
     \b
     Inspect does not generate files; it only reads existing artifacts:
       audio: extract, transcript, segments, refined
-      visual: sample, filter, filter-variants, semantic-filter, semantic-judgements, align, describe
+      visual: filter, semantic-filter, semantic-judgements, align, describe
       merge: blocks, unify, outline, note, assemble
     """
     tasks = _resolve_input_tasks(input_path)
@@ -494,9 +491,7 @@ def _ensure_runtime_dirs(paths: PipelinePaths) -> None:
         paths.run_dir,
         paths.audio_dir,
         paths.visual_dir,
-        paths.visual_raw_frames_dir,
         paths.visual_filter_frames_dir,
-        paths.visual_filter_variants_dir,
         paths.visual_semantic_frames_dir,
         paths.debug_dir,
         paths.refined_dir,
@@ -532,7 +527,7 @@ def _run_audio_upstream(ctx: PipelineContext, debug: bool) -> None:
 
 
 def _run_visual_upstream(ctx: PipelineContext) -> None:
-    _run_stage_sequence(ctx, [sample.run, filter.run, semantic_filter.run])
+    _run_stage_sequence(ctx, [filter.run, semantic_filter.run])
 
 
 def _run_multimodal_upstream(ctx: PipelineContext, debug: bool) -> None:
@@ -635,12 +630,10 @@ def _inspect_path(ctx: PipelineContext, namespace: str, stage: str) -> Path:
         ("audio", "transcript"): ctx.paths.transcript_raw_json,
         ("audio", "segments"): ctx.paths.segments_json,
         ("audio", "refined"): ctx.paths.refined_transcript_json,
-        ("visual", "sample"): ctx.paths.visual_sample_json,
         ("visual", "filter"): ctx.paths.visual_filtered_sample_json,
         ("visual", "semantic-filter"): ctx.paths.visual_semantic_sample_json,
         ("visual", "semantic-judgements"): ctx.paths.visual_semantic_judgements_json,
         ("visual", "align"): ctx.paths.visual_alignments_json,
-        ("visual", "filter-variants"): ctx.paths.visual_filter_variants_dir / "summary.json",
         ("visual", "describe"): ctx.paths.visual_descriptions_json,
         ("merge", "blocks"): ctx.paths.content_blocks_json,
         ("merge", "unify"): ctx.paths.content_blocks_json,

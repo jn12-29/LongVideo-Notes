@@ -51,8 +51,7 @@ def test_top_level_help_lists_commands_with_short_help_in_workflow_order() -> No
     assert commands.index("  run") < commands.index("  inspect")
     assert commands.index("  inspect") < commands.index("  output")
     assert commands.index("  output") < commands.index("  extract")
-    assert commands.index("  extract") < commands.index("  sample")
-    assert commands.index("  sample") < commands.index("  filter")
+    assert commands.index("  extract") < commands.index("  filter")
     assert commands.index("  filter") < commands.index("  semantic-filter")
     assert commands.index("  semantic-filter") < commands.index("  align")
     assert commands.index("  align") < commands.index("  describe")
@@ -80,10 +79,8 @@ def test_run_help_lists_end_to_end_outputs() -> None:
     assert "YYYYMMDD-HHMMSS.md" in result.output
     assert "cache/{input_hash}/note.md" in result.output
     assert "Multimodal extras with --mm:" in result.output
-    assert "cache/{input_hash}/visual/raw_frames/" in result.output
     assert "cache/{input_hash}/visual/filter_frames/" in result.output
     assert "visual/filtered_sample.json" in result.output
-    assert "visual/filter_variants/" in result.output
     assert "visual/descriptions.json" in result.output
 
 
@@ -106,7 +103,7 @@ def test_inspect_help_lists_readable_artifacts_without_generation() -> None:
     assert result.exit_code == 0
     assert "Inspect does not generate files" in result.output
     assert "audio: extract, transcript, segments, refined" in result.output
-    assert "visual: sample, filter, filter-variants, semantic-filter, semantic-judgements, align, describe" in result.output
+    assert "visual: filter, semantic-filter, semantic-judgements, align, describe" in result.output
     assert "merge: blocks, unify, outline, note, assemble" in result.output
 
 
@@ -137,8 +134,7 @@ def test_stage_help_mentions_head_minutes_and_no_cache() -> None:
         ("transcribe", ("cache/{input_hash}/transcript_raw.json",)),
         ("segment", ("cache/{input_hash}/segments.json",)),
         ("refine", ("cache/{input_hash}/refined_transcript.json", "cache/{input_hash}/refined/{seg_id:04d}.json")),
-        ("sample", ("cache/{input_hash}/visual/raw_frames/", "cache/{input_hash}/visual/sample.json")),
-        ("filter", ("cache/{input_hash}/visual/filter_frames/", "cache/{input_hash}/visual/filtered_sample.json", "cache/{input_hash}/visual/filter_variants/")),
+        ("filter", ("cache/{input_hash}/visual/filter_frames/", "cache/{input_hash}/visual/filtered_sample.json")),
         ("semantic-filter", ("cache/{input_hash}/visual/semantic_frames/", "cache/{input_hash}/visual/semantic_sample.json", "cache/{input_hash}/visual/semantic_judgements.json")),
         ("align", ("cache/{input_hash}/visual/alignments.json",)),
         ("describe", ("cache/{input_hash}/visual/descriptions.json",)),

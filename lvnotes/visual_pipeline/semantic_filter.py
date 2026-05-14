@@ -4,13 +4,13 @@ import shutil
 
 from jinja2 import Template
 
-from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json, hash_prompt_template
+from lvnotes.core.cache import atomic_write_json, build_cache_key, combined_content_hash, hash_json, hash_prompt_template
 from lvnotes.core.context import PipelineContext
 from lvnotes.core.exceptions import LLMError
 from lvnotes.core.paths import resolve_visual_filter_image_path, resolve_visual_semantic_image_path
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.schemas import SampledFrame, VisualSampleIndex, VisualSemanticJudgementList
-from lvnotes.llm import ImagePart, LLMMessage, LLMRequestOptions, TextPart, complete_json, for_task
+from lvnotes.llm import ImagePart, LLMContentPart, LLMMessage, LLMRequestOptions, TextPart, complete_json, for_task
 
 from lvnotes.visual_pipeline._common import cache_output, cached_output, prompt_path, read_samples
 
@@ -23,9 +23,13 @@ def run(ctx: PipelineContext) -> StageOutput:
     samples = read_samples(ctx.paths.visual_filtered_sample_json)
     template = prompt_path("semantic_filter.jinja")
     samples_hash = hash_json(samples)
+    image_hash = combined_content_hash([resolve_visual_filter_image_path(ctx.paths, frame.image_source_path) for frame in samples.frames])
     prompt_hash = hash_prompt_template(template)
     profile_hash = hash_json(ctx.config.llm.profiles[ctx.config.tasks["slide_judge"]])
-    cache_key = build_cache_key("visual_semantic_filter", {"samples": samples_hash, "profile": profile_hash, "prompt": prompt_hash})
+    cache_key = build_cache_key(
+        "visual_semantic_filter",
+        {"samples": samples_hash, "images": image_hash, "profile": profile_hash, "prompt": prompt_hash},
+    )
     if not ctx.no_cache and ctx.paths.visual_semantic_sample_json.exists():
         semantic = read_samples(ctx.paths.visual_semantic_sample_json)
         expected_outputs = [
@@ -44,12 +48,20 @@ def run(ctx: PipelineContext) -> StageOutput:
     atomic_write_json(ctx.paths.visual_semantic_judgements_json, judgements)
     atomic_write_json(ctx.paths.visual_semantic_sample_json, semantic_index)
     outputs = [ctx.paths.visual_semantic_sample_json, ctx.paths.visual_semantic_judgements_json, *[resolve_visual_semantic_image_path(ctx.paths, frame.image_source_path) for frame in kept]]
-    return cache_output("visual_semantic_filter", outputs, cache_key, {"filtered_samples": samples_hash}, "", prompt_hash, {"item_count": len(kept)})
+    return cache_output(
+        "visual_semantic_filter",
+        outputs,
+        cache_key,
+        {"filtered_samples": samples_hash, "filtered_images": image_hash},
+        "",
+        prompt_hash,
+        {"item_count": len(kept)},
+    )
 
 
 def _judge_frames(ctx: PipelineContext, samples: VisualSampleIndex, template: Path) -> VisualSemanticJudgementList:
     prompt = Template(template.read_text(encoding="utf-8")).render(frames=samples.frames)
-    parts = [TextPart(text=prompt)]
+    parts: list[LLMContentPart] = [TextPart(text=prompt)]
     for frame in samples.frames:
         parts.append(TextPart(text=f"frame_id={frame.id} timestamp={frame.timestamp:.3f}"))
         parts.append(ImagePart(path=resolve_visual_filter_image_path(ctx.paths, frame.image_source_path), mime_type="image/png"))

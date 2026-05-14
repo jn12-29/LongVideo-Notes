@@ -96,17 +96,11 @@ class VisualArtifacts:
     def __init__(self, input_hash: str, paths: PipelinePaths) -> None:
         self.input_hash = input_hash
         self.paths = paths
-        self._samples: VisualSampleIndex | None = None
         self._filtered_samples: VisualSampleIndex | None = None
         self._semantic_samples: VisualSampleIndex | None = None
         self._semantic_judgements: VisualSemanticJudgementList | None = None
         self._alignments: list[VisualAlignment] | None = None
         self._descriptions: VisualDescriptionList | None = None
-
-    def get_samples(self) -> VisualSampleIndex:
-        if self._samples is None:
-            self._samples = _read_required(self.paths.visual_sample_json, VisualSampleIndex, "visual_sample")
-        return self._samples
 
     def get_filtered_samples(self) -> VisualSampleIndex:
         if self._filtered_samples is None:

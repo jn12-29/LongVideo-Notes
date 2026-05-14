@@ -16,7 +16,7 @@ CLI 提供五类入口:
 | 端到端多模 | `lvnotes run <input-path> --mm` | 显式启用多模 |
 | 查看产物 | `lvnotes inspect <namespace> <stage> <input-path>` | 查看中间产物摘要或路径 |
 | 整理输出 | `lvnotes output tidy [output-dir]` | 把带时间戳的归档笔记整理到 `output/_archive/<relative-dir>/` |
-| 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `sample` / `filter` / `semantic-filter` / `align` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
+| 单 stage 重跑 | `lvnotes extract` / `transcribe` / `segment` / `refine` / `filter` / `semantic-filter` / `align` / `describe` / `unify` / `outline` / `section` / `assemble` | 调试、断点续跑、人工编辑后局部重跑 |
 
 CLI 的职责:
 
@@ -124,7 +124,7 @@ extract → transcribe → segment → refine → unify → outline → section 
 ```text
 audio:  extract → transcribe → segment → refine ┐
                                                      ├─ align → describe → unify → outline → section → assemble
-visual: sample  → filter → semantic-filter ─────────┘
+visual: filter → semantic-filter ───────────────────┘
 ```
 
 `align` 和 `describe` 必须等 `AudioArtifacts.is_complete() == True`。`align` 将 `semantic_sample.json` 中的图片按 timestamp 映射到 refined text segments；`describe` 使用对应 refined segment 的文本作为图像理解上下文。
@@ -231,8 +231,6 @@ lvnotes refine <input-path> --no-cache
 ### 3.5 多模 stage 子命令
 
 ```bash
-lvnotes sample <input-path> --mm
-lvnotes sample <input-path> --mm --head-minutes 10
 lvnotes filter <input-path> --mm
 lvnotes semantic-filter <input-path> --mm
 lvnotes align <input-path> --mm
@@ -241,8 +239,7 @@ lvnotes describe <input-path> --mm
 
 | 命令 | 调用 stage | 依赖 |
 |---|---|---|
-| `sample` | `visual_pipeline.sample.run(ctx)` | 视频媒体文件 + `--mm` |
-| `filter` | `visual_pipeline.filter.run(ctx)` | sample 产物 |
+| `filter` | `visual_pipeline.filter.run(ctx)` | 视频媒体文件 + `--mm` |
 | `semantic-filter` | `visual_pipeline.semantic_filter.run(ctx)` | filter 产物 |
 | `align` | `visual_pipeline.align.run(ctx)` | semantic-filter 产物 + audio refined |
 | `describe` | `visual_pipeline.describe.run(ctx)` | align 产物 + audio refined |
@@ -251,8 +248,7 @@ lvnotes describe <input-path> --mm
 
 | 命令 | 主要产物 |
 |---|---|
-| `sample` | `cache/{input_hash}/visual/raw_frames/`, `cache/{input_hash}/visual/sample.json` |
-| `filter` | `cache/{input_hash}/visual/filter_frames/`, `cache/{input_hash}/visual/filtered_sample.json`, `cache/{input_hash}/visual/filter_variants/` |
+| `filter` | `cache/{input_hash}/visual/filter_frames/`, `cache/{input_hash}/visual/filtered_sample.json` |
 | `semantic-filter` | `cache/{input_hash}/visual/semantic_frames/`, `cache/{input_hash}/visual/semantic_sample.json`, `cache/{input_hash}/visual/semantic_judgements.json` |
 | `align` | `cache/{input_hash}/visual/alignments.json` |
 | `describe` | `cache/{input_hash}/visual/descriptions.json` |
@@ -521,9 +517,9 @@ Mode: multimodal
 Cache: enabled
 
 audio.extract: running
-visual.sample: running
+visual.filter: running
 audio.extract: done
-visual.sample: done
+visual.filter: done
 audio.transcribe: running
 audio.transcribe:  42%|████▏     | 1520/3600s
 audio.transcribe: done
@@ -704,8 +700,6 @@ lvnotes refine lecture.mp4 --head-minutes 10
 lvnotes refine lecture.mp4 --debug
 lvnotes refine lecture.mp4 --no-cache
 
-lvnotes sample lecture.mp4 --mm
-lvnotes sample lecture.mp4 --mm --head-minutes 10
 lvnotes filter lecture.mp4 --mm
 lvnotes semantic-filter lecture.mp4 --mm
 lvnotes align lecture.mp4 --mm

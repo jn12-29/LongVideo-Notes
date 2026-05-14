@@ -201,11 +201,11 @@ log = logging.getLogger(__name__)
 
 ```python
 # 错误
-if phash_distance > 15:
+if scene_score > 15:
     new_segment()
 
 # 正确
-if phash_distance > config.visual_pipeline.filter.phash_threshold:
+if scene_score > config.visual_pipeline.filter.threshold:
     keep_frame()
 ```
 

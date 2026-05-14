@@ -12,6 +12,7 @@ dependencies = [
   "anthropic",
   "click",
   "jinja2",
+  "numpy",
   "nvidia-cublas-cu12>=12.9.2.10",
   "nvidia-cudnn-cu12>=9.22.0.52",
   "openai",
@@ -19,6 +20,8 @@ dependencies = [
   "pydantic",
   "pydantic-settings",
   "pyyaml",
+  "opencv-python",
+  "scenedetect>=0.7,<0.8",
   "tenacity",
   "tqdm",
 ]

@@ -62,15 +62,14 @@ uv run lvnotes assemble <input-path> --no-cache
 | 命令 | 含义 |
 |---|---|
 | `lvnotes run <input-path>` | 端到端生成 Markdown 笔记。默认走纯音频模式,会依次跑音频管线和合并阶段。 |
-| `lvnotes run <input-path> --mm` | 端到端多模运行。视频文件会额外抽帧、筛图、对齐画面并结合视觉内容生成笔记;音频文件仍走纯音频模式。 |
+| `lvnotes run <input-path> --mm` | 端到端多模运行。视频文件会筛图、对齐画面并结合视觉内容生成笔记;音频文件仍走纯音频模式。 |
 | `lvnotes inspect <namespace> <stage> <input-path>` | 只读查看已有中间产物或最终产物信息,不重新计算、不创建文件、不加写锁。常用于确认某个 stage 是否已产出结果。 |
 | `lvnotes output tidy [output-dir]` | 整理最终输出目录。默认只预览;传 `--apply` 后把带时间戳的归档笔记和同名 `_assets/` 移到 `output/_archive/<relative-dir>/`,latest 笔记留在原位。 |
 | `lvnotes extract <input-path>` | 从音频或视频中抽取标准 wav,生成音频抽取元信息。 |
 | `lvnotes transcribe <input-path>` | 读取抽取后的 wav,调用 ASR 生成原始转录。 |
 | `lvnotes segment <input-path>` | 基于原始转录生成语义分段。 |
 | `lvnotes refine <input-path>` | 清洗、整理分段转录,生成后续合并阶段使用的 refined transcript。 |
-| `lvnotes sample <input-path> --mm` | 从视频中按配置采样原始帧。 |
-| `lvnotes filter <input-path> --mm` | 对采样帧做本地去重和基础过滤。 |
+| `lvnotes filter <input-path> --mm` | 用 PySceneDetect 场景检测，并直接从每个 scene 中筛选候选代表帧。 |
 | `lvnotes semantic-filter <input-path> --mm` | 用 VLM 判断过滤后帧是否有笔记价值。 |
 | `lvnotes align <input-path> --mm` | 将保留的关键帧按时间戳对齐到 refined transcript 段落。 |
 | `lvnotes describe <input-path> --mm` | 结合对应时间段的讲解文本,对关键画面生成详细视觉描述。 |
@@ -107,6 +106,7 @@ LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 pro
 运行真实管线需要：
 
 - `ffmpeg` / `ffprobe`
+- PySceneDetect 和 OpenCV 依赖会随 Python package 安装，用于多模 filter 阶段的 scene detection 与候选帧读取
 - 有效的 `config.yaml`
 - 对应 LLM profile 的 API key 环境变量，或本地 OpenAI-compatible endpoint
 - 运行 ASR 时安装 `faster-whisper` 可选依赖
@@ -121,7 +121,8 @@ LLM profile 可配置 reasoning / thinking 默认参数；所有映射到该 pro
 - `docs/media.md` —— media 模块权威：ffmpeg / ffprobe 唯一入口
 - `docs/asr.md` —— ASR 模块权威：ASR 抽象与 faster-whisper 本地实现
 - `docs/audio-pipeline.md` —— 音频管线权威：extract / transcribe / segment / refine
-- `docs/visual-pipeline.md` —— 多模管线权威：sample / filter / semantic_filter / align / describe
+- `docs/visual-pipeline.md` —— 多模管线权威：filter / semantic_filter / align / describe
+- `docs/visual-vlm-improvement-plan.md` —— 多模 VLM 质量改进交接计划：语义去重、OCR 优先描述与验收标准
 - `docs/merge.md` —— 合并阶段权威：unify / outline / section / assemble 与最终 Markdown 生成
 
 ## 当前状态

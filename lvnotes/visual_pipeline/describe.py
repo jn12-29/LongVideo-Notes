@@ -5,7 +5,7 @@ import re
 
 from jinja2 import Template
 
-from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json, hash_prompt_template
+from lvnotes.core.cache import atomic_write_json, build_cache_key, combined_content_hash, hash_json, hash_prompt_template
 from lvnotes.core.context import PipelineContext
 from lvnotes.core.exceptions import CacheError, LLMError
 from lvnotes.core.parallel import run_parallel
@@ -29,10 +29,14 @@ def run(ctx: PipelineContext) -> StageOutput:
     audio_texts = [_audio_text_for_alignment(ctx, segment_by_id[alignment.segment_id]) for alignment in alignments]
     template = prompt_path("describe.jinja")
     alignments_hash = hash_json(alignments)
+    image_hash = combined_content_hash([resolve_visual_semantic_image_path(ctx.paths, alignment.image_source_path) for alignment in alignments])
     audio_hash = hash_json(audio_texts)
     prompt_hash = hash_prompt_template(template)
     profile_hash = hash_json(ctx.config.llm.profiles[ctx.config.tasks["slide_describe"]])
-    cache_key = build_cache_key("visual_describe", {"alignments": alignments_hash, "audio_text": audio_hash, "profile": profile_hash, "prompt": prompt_hash})
+    cache_key = build_cache_key(
+        "visual_describe",
+        {"alignments": alignments_hash, "images": image_hash, "audio_text": audio_hash, "profile": profile_hash, "prompt": prompt_hash},
+    )
     if not ctx.no_cache:
         cached = cached_output("visual_describe", [ctx.paths.visual_descriptions_json], cache_key)
         if cached is not None:
@@ -47,7 +51,15 @@ def run(ctx: PipelineContext) -> StageOutput:
     )
     result_list = VisualDescriptionList(descriptions=descriptions)
     atomic_write_json(ctx.paths.visual_descriptions_json, result_list)
-    return cache_output("visual_describe", [ctx.paths.visual_descriptions_json], cache_key, {"alignments": alignments_hash, "audio_text": audio_hash}, "", prompt_hash, {"item_count": len(descriptions)})
+    return cache_output(
+        "visual_describe",
+        [ctx.paths.visual_descriptions_json],
+        cache_key,
+        {"alignments": alignments_hash, "semantic_images": image_hash, "audio_text": audio_hash},
+        "",
+        prompt_hash,
+        {"item_count": len(descriptions)},
+    )
 
 
 @dataclass(frozen=True)

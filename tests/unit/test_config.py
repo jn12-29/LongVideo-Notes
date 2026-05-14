@@ -48,6 +48,15 @@ def test_app_config_validates_minimal_config() -> None:
     assert config.audio_pipeline.extract.sample_rate == 16000
     assert config.audio_pipeline.refine.mode == "adaptive"
     assert config.audio_pipeline.refine.batch_size == 8
+    assert config.visual_pipeline.filter.detector == "content"
+    assert config.visual_pipeline.filter.threshold == "auto"
+    assert config.visual_pipeline.filter.auto_threshold_candidates == (10.0, 15.0, 20.0, 25.0, 27.0, 30.0, 35.0, 40.0)
+    assert config.visual_pipeline.filter.target_frames_per_minute == 1.5
+    assert config.visual_pipeline.filter.min_scene_len_seconds == 1.0
+    assert config.visual_pipeline.filter.representative == "content"
+    assert config.visual_pipeline.filter.candidate_fps == 3.0
+    assert config.visual_pipeline.filter.min_content_score == 0.5
+    assert config.visual_pipeline.filter.duplicate_pixel_mean_threshold == 0.025
     assert config.visual_pipeline.describe.concurrent_calls == 5
 
 
@@ -144,61 +153,92 @@ def test_load_config_missing_file_raises_config_error() -> None:
         load_config(Path("does-not-exist.yaml"))
 
 
-def test_load_config_loads_filter_variants_file_relative_to_config(tmp_path: Path) -> None:
-    variants = tmp_path / "variants.yaml"
-    variants.write_text(
-        """
-variants:
-  - name: default
-    phash_threshold: 7
-""".lstrip(),
-        encoding="utf-8",
-    )
+def test_visual_filter_config_validates_scene_detector_options() -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {
+        "filter": {
+            "detector": "content",
+            "threshold": 30.0,
+            "auto_threshold_candidates": [12.0, 18.0, 24.0],
+            "target_frames_per_minute": 1.5,
+            "min_scene_len_seconds": 2.0,
+            "representative": "middle",
+            "candidate_fps": 5.0,
+            "min_content_score": 0.7,
+            "duplicate_pixel_mean_threshold": 0.05,
+        }
+    }
+
+    config = AppConfig.model_validate(payload)
+
+    assert config.visual_pipeline.filter.threshold == 30.0
+    assert config.visual_pipeline.filter.auto_threshold_candidates == (12.0, 18.0, 24.0)
+    assert config.visual_pipeline.filter.target_frames_per_minute == 1.5
+    assert config.visual_pipeline.filter.min_scene_len_seconds == 2.0
+    assert config.visual_pipeline.filter.representative == "middle"
+    assert config.visual_pipeline.filter.candidate_fps == 5.0
+    assert config.visual_pipeline.filter.min_content_score == 0.7
+    assert config.visual_pipeline.filter.duplicate_pixel_mean_threshold == 0.05
+
+
+@pytest.mark.parametrize(
+    "filter_config",
+    [
+        {"detector": "adaptive"},
+        {"threshold": 0},
+        {"threshold": "adaptive"},
+        {"auto_threshold_candidates": []},
+        {"auto_threshold_candidates": [10.0, 0]},
+        {"target_frames_per_minute": 0},
+        {"min_scene_len_seconds": 0},
+        {"representative": "end"},
+        {"candidate_fps": 0},
+        {"min_content_score": 0},
+        {"duplicate_pixel_mean_threshold": 0},
+    ],
+)
+def test_visual_filter_config_rejects_invalid_scene_detector_options(filter_config: dict[str, object]) -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"filter": filter_config}
+
+    with pytest.raises(ValueError):
+        AppConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["threshold", "target_frames_per_minute", "min_scene_len_seconds", "candidate_fps", "min_content_score", "duplicate_pixel_mean_threshold"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_visual_filter_config_rejects_non_finite_float_options(field: str, value: float) -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"filter": {field: value}}
+
+    with pytest.raises(ValueError):
+        AppConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_visual_filter_config_rejects_non_finite_auto_threshold_candidates(value: float) -> None:
+    payload = _minimal_config()
+    payload["visual_pipeline"] = {"filter": {"auto_threshold_candidates": [10.0, value]}}
+
+    with pytest.raises(ValueError):
+        AppConfig.model_validate(payload)
+
+
+def test_legacy_filter_variant_config_is_rejected(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     payload = _minimal_config()
     payload["visual_pipeline"] = {"filter": {"variants_file": "variants.yaml"}}
     config_path.write_text(__import__("yaml").safe_dump(payload), encoding="utf-8")
 
-    config = load_config(config_path)
-
-    assert config.visual_pipeline.filter.variants_file == variants
-    assert config.filter_variants is not None
-    assert config.filter_variants.variants[0].name == "default"
-    assert config.filter_variants.variants[0].phash_threshold == 7
+    with pytest.raises(ConfigError, match="variants_file"):
+        load_config(config_path)
 
 
-def test_filter_variant_names_must_be_unique() -> None:
-    payload = _minimal_config()
-    payload["filter_variants"] = {"variants": [{"name": "same"}, {"name": "same"}]}
-
-    with pytest.raises(ValueError, match="unique"):
-        AppConfig.model_validate(payload)
-
-
-def test_filter_variant_name_must_be_safe() -> None:
-    payload = _minimal_config()
-    payload["filter_variants"] = {"variants": [{"name": "bad/name"}]}
-
-    with pytest.raises(ValueError, match="variant name"):
-        AppConfig.model_validate(payload)
-
-
-def test_active_filter_variant_must_exist() -> None:
-    payload = _minimal_config()
-    payload["visual_pipeline"] = {"filter": {"active_variant": "missing"}}
-    payload["filter_variants"] = {"variants": [{"name": "default"}]}
-
-    with pytest.raises(ValueError, match="active_variant"):
-        AppConfig.model_validate(payload)
-
-
-def test_active_filter_variant_must_exist_in_loaded_variants_file(tmp_path: Path) -> None:
-    variants = tmp_path / "variants.yaml"
-    variants.write_text("variants:\n  - name: default\n", encoding="utf-8")
+def test_legacy_visual_sample_config_is_rejected(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     payload = _minimal_config()
-    payload["visual_pipeline"] = {"filter": {"active_variant": "missing", "variants_file": "variants.yaml"}}
+    payload["visual_pipeline"] = {"sample": {"fps": 1}}
     config_path.write_text(__import__("yaml").safe_dump(payload), encoding="utf-8")
 
-    with pytest.raises(ConfigError, match="active_variant"):
+    with pytest.raises(ConfigError, match="sample"):
         load_config(config_path)
