@@ -7,6 +7,7 @@ from pathlib import Path
 
 from lvnotes.core.cache import atomic_write_text, build_cache_key, hash_file, hash_json
 from lvnotes.core.context import PipelineContext
+from lvnotes.core.exceptions import CacheError
 from lvnotes.core.paths import make_output_asset_path, make_output_markdown_image_path, make_timestamped_output_path, resolve_visual_image_path
 from lvnotes.core.pipeline import StageOutput
 from lvnotes.core.schemas import ContentBlock
@@ -27,6 +28,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     outline = read_outline(ctx.paths.outline_json)
     blocks = read_blocks(ctx.paths.content_blocks_json)
     section_paths = [ctx.paths.sections_dir / f"{chapter.id:03d}.md" for chapter in outline.chapters]
+    _ensure_section_files(section_paths)
     sections_hash = hash_json([hash_file(path) for path in section_paths])
     cache_key = build_cache_key("assemble", {"mode": ctx.mode, "outline": hash_json(outline), "blocks": hash_file(ctx.paths.content_blocks_json), "sections": sections_hash, "config": hash_json(ctx.config.merge.assemble), "link_policy": _ASSEMBLE_LINK_POLICY})
     generated_at = datetime.now(timezone.utc)
@@ -70,9 +72,16 @@ def _assemble_note(ctx: PipelineContext, outline, blocks, section_paths: list, g
 
 
 def _write_output_note(ctx: PipelineContext, output_note_md: Path, note: str, blocks: list[ContentBlock]) -> None:
+    output_note_md.parent.mkdir(parents=True, exist_ok=True)
     image_map = _publish_output_assets(ctx, output_note_md, blocks)
     rendered = _rewrite_markdown_image_links(note, image_map)
     atomic_write_text(output_note_md, rendered)
+
+
+def _ensure_section_files(section_paths: list[Path]) -> None:
+    missing = [path for path in section_paths if not path.exists()]
+    if missing:
+        raise CacheError(f"section file not found: {missing[0]}; run section first")
 
 
 def _publish_output_assets(ctx: PipelineContext, output_note_md: Path, blocks: list[ContentBlock]) -> dict[str, str]:

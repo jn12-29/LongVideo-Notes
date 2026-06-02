@@ -7,6 +7,7 @@ import pytest
 from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json, read_cache_manifest
 from lvnotes.core.config import AppConfig
 from lvnotes.core.context import ArtifactBundle, PipelineContext
+from lvnotes.core.exceptions import CacheError
 from lvnotes.core.paths import build_paths, make_output_stem, make_timestamped_output_path
 from lvnotes.core.serialization import from_jsonable, to_jsonable
 from lvnotes.core.schemas import Transcript, TranscriptSegment, WordTimestamp
@@ -136,6 +137,23 @@ def test_assemble_writes_latest_and_timestamped_outputs(tmp_path: Path) -> None:
     assert manifest.output_paths == [ctx.paths.output_note_md, ctx.paths.cache_note_md]
 
 
+def test_assemble_creates_output_subdir_for_directory_input(tmp_path: Path) -> None:
+    ctx = _assemble_ctx(tmp_path, output_subdir=Path("week1"))
+
+    assemble.run(ctx)
+
+    assert ctx.paths.output_note_md == tmp_path / "output" / "week1" / "讲座.md"
+    assert ctx.paths.output_note_md.exists()
+
+
+def test_assemble_missing_section_raises_cache_error(tmp_path: Path) -> None:
+    ctx = _assemble_ctx(tmp_path)
+    (ctx.paths.sections_dir / "001.md").unlink()
+
+    with pytest.raises(CacheError, match="run section first"):
+        assemble.run(ctx)
+
+
 def test_assemble_writes_explicit_chapter_anchors(tmp_path: Path) -> None:
     ctx = _assemble_ctx(tmp_path)
 
@@ -190,10 +208,10 @@ def test_assemble_cache_key_includes_mode(tmp_path: Path) -> None:
     assert "mode: multimodal" in ctx.paths.output_note_md.read_text(encoding="utf-8")
 
 
-def _assemble_ctx(tmp_path: Path) -> PipelineContext:
+def _assemble_ctx(tmp_path: Path, output_subdir: Path | None = None) -> PipelineContext:
     source = tmp_path / "讲座.mp3"
     source.write_bytes(b"audio")
-    paths = build_paths(source, tmp_path / "cache", tmp_path / "output", "inputhash")
+    paths = build_paths(source, tmp_path / "cache", tmp_path / "output", "inputhash", output_subdir=output_subdir)
     for directory in (paths.run_dir, paths.sections_dir, paths.output_dir):
         directory.mkdir(parents=True, exist_ok=True)
     atomic_write_json(paths.outline_json, Outline([Chapter(1, "开场", "summary", 0, 0)]))

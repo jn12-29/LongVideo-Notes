@@ -197,7 +197,9 @@ longvideo-notes/
 │   │   ├── refine.py
 │   │   └── prompts/
 │   │       ├── segment.jinja
-│   │       └── refine.jinja
+│   │       ├── refine.jinja
+│   │       ├── refine_batch.jinja
+│   │       └── refine_single.jinja
 │   │
 │   ├── visual_pipeline/         (多模管线)
 │   │   ├── filter.py
@@ -217,8 +219,7 @@ longvideo-notes/
 │       └── app.py               (typer/click 入口)
 │
 ├── tests/
-│   ├── unit/
-│   └── integration/
+│   └── unit/
 │
 └── cache/                       (运行时产生,gitignore)
     └── {input_hash}/

@@ -21,7 +21,7 @@
 
 **本管线不知道下游存在**——既不知道有多模管线,也不知道有合并阶段。这是 `docs/overview.md` §6 关键架构约定第 5、6 条以及 `coding-standards.md` §6.2(单向依赖)的强制结论。这条约束直接决定了产物面向"通用下游"而非具体下游:见 §2 第 3 条。
 
-纯音频模式与多模模式下,本管线行为完全相同。区别仅在于多模模式下 `RefinedTranscript` 还会被多模管线 stage 5 (describe) 消费一次。
+纯音频模式与多模模式下,本管线行为完全相同。区别仅在于多模模式下 `RefinedTranscript` 还会被多模管线 stage 4 (describe) 消费一次。
 
 ---
 
@@ -367,7 +367,7 @@ class AudioArtifacts:
     (避免被 visual 调度循环 poll 时反复反序列化)。schema 校验在
     get_refined() 首次调用时做并缓存到实例字段。
 
-    多模管线 stage 5 (describe) 启动前需要 audio_artifacts.is_complete() == True。
+    多模管线 stage 4 (describe) 启动前需要 audio_artifacts.is_complete() == True。
     等待逻辑由 CLI 调度层(asyncio.Event 等)实现,本类不提供 async 接口。
     """
 ```
@@ -409,7 +409,9 @@ lvnotes/audio_pipeline/
 ├── refine.py               # Stage 4
 └── prompts/
     ├── segment.jinja
-    └── refine.jinja
+    ├── refine.jinja
+    ├── refine_batch.jinja
+    └── refine_single.jinja
 ```
 
 ### 每个 stage 的接口
