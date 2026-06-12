@@ -155,8 +155,8 @@ Stage 之间不互相 import。需要读上游产物时,通过 `ctx.artifacts.au
 - 用包内模板 `lvnotes/audio_pipeline/prompts/segment.jinja` 渲染 prompt。模板里给 LLM 看的内容:语义切分任务说明 + 全文转录。带 word-level 时间戳的 ASR 段会按每个词的时间戳展开进入 prompt,因此语义切分边界可以落在 ASR segment 内部的任意词级时间点。LLM 必须把每段 `start` 设为本段第一个词的 `start`,把 `end` 设为本段最后一个词的 `end`;没有 word-level 时间戳时才退回使用承载该语义段的 ASR segment `start/end`。
 - 通过 `client = for_task(ctx.config, "segment")` 获取 LLM client。LLM JSON 解析 + 1 次修复重试 + schema 校验全部走 `complete_json(client, messages, schema, options, max_repair_retries=1)` helper,不在本 stage 自己写解析重试逻辑
 - 业务级不变量校验在 helper 之上额外做:
-  1. 将 LLM 输出的每个 `start` / `end` 独立吸附到最近的 transcript 时间戳候选。候选优先来自 `WordTimestamp.start/end`;没有 words 的 ASR segment 使用 `TranscriptSegment.start/end`。若原始边界距离最近候选 `> 0.2s` 记录 warning,`> 2.0s` 抛 `LLMError`。
-  2. 校验吸附后的时间戳:`start < end`、相邻 markers 不重叠、所有边界都在 `[0.0, transcript.duration]` 范围内。段间允许存在静音 gap,因为 `end` 表示上一段最后一个词的结束时间,`start` 表示下一段第一个词的开始时间。任一校验失败抛 `LLMError` 含具体不变量名,触发上层重试。
+  1. 将 LLM 输出的每个 `start` / `end` 独立吸附到最近的 transcript 时间戳候选。候选优先来自 `WordTimestamp.start/end`;没有 words 的 ASR segment 使用 `TranscriptSegment.start/end`。若原始边界距离最近候选 `> 0.2s` 记录 warning,但继续使用吸附后的真实 transcript 时间戳。
+  2. 校验吸附后的时间戳:`start < end`、相邻 markers 不重叠、所有边界都在 `[0.0, transcript.duration]` 范围内,且所有非空 transcript 词都被某个 marker 覆盖。没有 word-level 时间戳的非空 `TranscriptSegment` 必须被 marker 区间完整覆盖。段间只允许没有 transcript 词的静音 gap,因为 `end` 表示上一段最后一个词的结束时间,`start` 表示下一段第一个词的开始时间。任一校验失败抛 `LLMError` 含具体不变量名,触发上层重试。
 
 **配置项**(`audio_pipeline.segment.*`):
 无。segment stage 只按转录内容和 prompt 做语义切分,不配置目标段数或段时长限制。

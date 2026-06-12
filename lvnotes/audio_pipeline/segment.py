@@ -1,9 +1,10 @@
 import logging
 from bisect import bisect_left
+from pathlib import Path
 
 from jinja2 import Template
 
-from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json, hash_prompt_template
+from lvnotes.core.cache import atomic_write_json, build_cache_key, hash_json, hash_prompt_template, read_json_file
 from lvnotes.core.context import PipelineContext
 from lvnotes.core.exceptions import LLMError
 from lvnotes.core.pipeline import StageOutput
@@ -13,9 +14,8 @@ from lvnotes.llm import LLMMessage, LLMRequestOptions, TextPart, complete_json, 
 from lvnotes.audio_pipeline._common import cache_output, cached_output, prompt_path
 
 log = logging.getLogger(__name__)
-TRANSCRIPT_RENDER_VERSION = "word_timestamps_snap_segment_edges_v1"
+TRANSCRIPT_RENDER_VERSION = "word_timestamps_snap_segment_edges_cover_text_v1"
 SNAP_WARNING_THRESHOLD_SECONDS = 0.2
-SNAP_FAILURE_THRESHOLD_SECONDS = 2.0
 
 
 def run(ctx: PipelineContext) -> StageOutput:
@@ -30,9 +30,11 @@ def run(ctx: PipelineContext) -> StageOutput:
     output_paths = [ctx.paths.segments_json]
     if not ctx.no_cache:
         cached = cached_output("segment", output_paths, cache_key)
-        if cached is not None:
+        if cached is not None and _cached_segments_valid(ctx.paths.segments_json, transcript):
             log.info("audio.segment cache hit input_hash=%s", ctx.input_hash)
             return cached
+        if cached is not None:
+            log.warning("audio.segment cache rejected by current invariants input_hash=%s", ctx.input_hash)
 
     prompt = _render_prompt(template, transcript)
     segments = complete_json(
@@ -44,6 +46,7 @@ def run(ctx: PipelineContext) -> StageOutput:
     )
     segments = _snap_segments_to_transcript_timestamps(segments, transcript)
     _validate_segments(segments, transcript.duration)
+    _validate_segments_cover_transcript_text(segments, transcript)
     atomic_write_json(ctx.paths.segments_json, segments)
     return cache_output("segment", output_paths, cache_key, {"transcript": transcript_hash}, config_hash, prompt_hash, {"item_count": len(segments.markers)})
 
@@ -83,6 +86,57 @@ def _validate_segments(segments: SegmentList, duration: float) -> None:
         raise LLMError("segment invariant failed: outside transcript duration")
 
 
+def _cached_segments_valid(path: Path, transcript: Transcript) -> bool:
+    try:
+        segments = read_json_file(path, SegmentList)  # type: ignore[assignment]
+        _validate_segments(segments, transcript.duration)
+        _validate_segments_cover_transcript_text(segments, transcript)
+    except Exception:
+        return False
+    return True
+
+
+def _validate_segments_cover_transcript_text(segments: SegmentList, transcript: Transcript) -> None:
+    markers = segments.markers
+    for transcript_segment in transcript.segments:
+        if transcript_segment.words:
+            for word in transcript_segment.words:
+                if word.word.strip() and not _covered_by_marker(word.start, word.end, markers):
+                    raise LLMError("segment invariant failed: uncovered transcript word")
+        elif transcript_segment.text.strip() and not _fully_covered_by_markers(
+            transcript_segment.start,
+            transcript_segment.end,
+            markers,
+        ):
+            raise LLMError("segment invariant failed: uncovered transcript segment")
+
+
+def _covered_by_marker(start: float, end: float, markers: list[SegmentMarker]) -> bool:
+    for marker in markers:
+        if _intervals_intersect(start, end, marker.start, marker.end):
+            return True
+    return False
+
+
+def _intervals_intersect(left_start: float, left_end: float, right_start: float, right_end: float) -> bool:
+    if left_start == left_end:
+        return right_start <= left_start < right_end
+    return left_start < right_end and left_end > right_start
+
+
+def _fully_covered_by_markers(start: float, end: float, markers: list[SegmentMarker]) -> bool:
+    cursor = start
+    for marker in sorted(markers, key=lambda item: item.start):
+        if marker.end <= cursor:
+            continue
+        if marker.start > cursor:
+            return False
+        cursor = max(cursor, marker.end)
+        if cursor >= end:
+            return True
+    return cursor >= end
+
+
 def _snap_segments_to_transcript_timestamps(segments: SegmentList, transcript: Transcript) -> SegmentList:
     markers = segments.markers
     if not markers:
@@ -117,7 +171,7 @@ def _boundary_candidates(transcript: Transcript) -> list[float]:
 
 def _snap_boundary(boundary: float, candidates: list[float], label: str) -> float:
     snapped, distance = _nearest_boundary(boundary, candidates)
-    _warn_or_fail_distance(distance, label, boundary, snapped)
+    _warn_distance(distance, label, boundary, snapped)
     return snapped
 
 
@@ -134,9 +188,7 @@ def _nearest_boundary(boundary: float, candidates: list[float]) -> tuple[float, 
     return snapped, abs(snapped - boundary)
 
 
-def _warn_or_fail_distance(distance: float, label: str, boundary: float, snapped: float) -> None:
-    if distance > SNAP_FAILURE_THRESHOLD_SECONDS:
-        raise LLMError(f"segment boundary {label} is {distance:.3f}s from nearest transcript timestamp")
+def _warn_distance(distance: float, label: str, boundary: float, snapped: float) -> None:
     if distance > SNAP_WARNING_THRESHOLD_SECONDS:
         log.warning(
             "segment boundary %s snapped from %.3f to %.3f (distance %.3fs)",

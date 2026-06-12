@@ -5,7 +5,7 @@ Avoid creating very short units for isolated lead-in sentences unless the topic 
 
 Output format: return JSON matching this schema: {"markers":[{"id":0,"start":0.0,"end":60.0,"topic_hint":"...","boundary_reason":"..."}]}.
 Write topic_hint and boundary_reason in Simplified Chinese. Keep English technical terms, proper nouns, abbreviations, formulas, code identifiers, and original slide terms when preserving the original wording is clearer. Do not translate established English terms mechanically.
-The transcript may contain word-level timestamps. Boundaries may use any shown timestamp, including timestamps inside a longer speech line.
+The transcript may contain word-level timestamps. Boundaries must use only timestamps shown in the transcript, including timestamps inside a longer speech line. Do not invent intermediate timestamps.
 For each content unit, set start to the start timestamp of the first word in that unit, and set end to the end timestamp of the last word in that unit. If only line-level timestamps are shown, use the line start/end that contain the content unit.
 Cover all transcript words in order without overlap. Silent gaps between units are allowed.
 
